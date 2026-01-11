@@ -1,141 +1,134 @@
 --!strict
--- ConfigManager.lua
--- Safe Roblox config manager (DataStore-backed via server RemoteFunction)
--- - Saves toggles/sliders/dropdowns/multidropdowns/colorpickers via window:GetConfig()
--- - Loads via window:LoadConfig()
---
--- REQUIRED server companion (create yourself):
---   ReplicatedStorage/BlueView_ConfigRF (RemoteFunction)
--- with OnServerInvoke actions:
---   "list" -> {string}
---   "save", name:string, data:table -> (boolean, string?)
---   "load", name:string -> (table?, string?)
---   "delete", name:string -> (boolean, string?)
---   "rename", old:string, new:string -> (boolean, string?)
+-- ConfigManager.lua (UPDATED)
+-- Saves/loads config values using executor filesystem APIs.
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
 
 local ConfigManager = {}
+ConfigManager.__index = ConfigManager
 
-export type SetupOpts = {
-	TabName: string?,
-	GroupTitle: string?,
-	Side: ("Left"|"Right")?,
-}
+local function hasFS()
+	return (type(writefile) == "function")
+		and (type(readfile) == "function")
+		and (type(isfile) == "function")
+end
 
-local function safeList(t: any): {string}
-	if typeof(t) ~= "table" then return {} end
+local function ensureFolder(path: string)
+	if type(isfolder) == "function" and type(makefolder) == "function" then
+		if not isfolder(path) then
+			makefolder(path)
+		end
+	end
+end
+
+local function safeEncode(t: any): string
+	return HttpService:JSONEncode(t)
+end
+
+local function safeDecode(s: string): any
+	return HttpService:JSONDecode(s)
+end
+
+function ConfigManager.new(rootFolder: string)
+	local self = setmetatable({}, ConfigManager)
+	self.RootFolder = rootFolder
+	return self
+end
+
+function ConfigManager:GetFolder(): string
+	return self.RootFolder
+end
+
+function ConfigManager:Save(window: any, name: string): (boolean, string)
+	if not hasFS() then return false, "Filesystem not available in this environment." end
+	if name == "" then return false, "Config name is empty." end
+
+	ensureFolder(self.RootFolder)
+	local path = self.RootFolder .. "/" .. name .. ".json"
+
+	local data = window:CollectConfig()
+	local ok, err = pcall(function()
+		writefile(path, safeEncode(data))
+	end)
+	if not ok then
+		return false, tostring(err)
+	end
+	return true, "Saved: " .. name
+end
+
+function ConfigManager:Load(window: any, name: string): (boolean, string)
+	if not hasFS() then return false, "Filesystem not available in this environment." end
+	local path = self.RootFolder .. "/" .. name .. ".json"
+	if type(isfile) == "function" and not isfile(path) then
+		return false, "Config not found: " .. name
+	end
+
+	local ok, err = pcall(function()
+		local raw = readfile(path)
+		local data = safeDecode(raw)
+		if typeof(data) == "table" then
+			window:ApplyConfig(data)
+		end
+	end)
+	if not ok then
+		return false, tostring(err)
+	end
+	return true, "Loaded: " .. name
+end
+
+function ConfigManager:Delete(name: string): (boolean, string)
+	if not hasFS() then return false, "Filesystem not available in this environment." end
+	if type(delfile) ~= "function" then return false, "Delete not supported." end
+
+	local path = self.RootFolder .. "/" .. name .. ".json"
+	local ok, err = pcall(function()
+		if type(isfile) == "function" and isfile(path) then
+			delfile(path)
+		end
+	end)
+	if not ok then
+		return false, tostring(err)
+	end
+	return true, "Deleted: " .. name
+end
+
+function ConfigManager:Rename(oldName: string, newName: string): (boolean, string)
+	if not hasFS() then return false, "Filesystem not available in this environment." end
+	if type(delfile) ~= "function" then return false, "Rename not supported." end
+
+	local oldPath = self.RootFolder .. "/" .. oldName .. ".json"
+	local newPath = self.RootFolder .. "/" .. newName .. ".json"
+
+	local ok, err = pcall(function()
+		local raw = readfile(oldPath)
+		writefile(newPath, raw)
+		delfile(oldPath)
+	end)
+	if not ok then
+		return false, tostring(err)
+	end
+	return true, "Renamed: " .. oldName .. " -> " .. newName
+end
+
+function ConfigManager:List(): {string}
 	local out: {string} = {}
-	for _, v in ipairs(t :: any) do
-		if typeof(v) == "string" then table.insert(out, v) end
+	if not hasFS() then return out end
+	if type(listfiles) ~= "function" then return out end
+	ensureFolder(self.RootFolder)
+
+	local ok, files = pcall(function()
+		return listfiles(self.RootFolder)
+	end)
+	if not ok or typeof(files) ~= "table" then return out end
+
+	for _, p in ipairs(files :: {any}) do
+		local s = tostring(p)
+		local name = string.match(s, "([^/\\]+)%.json$")
+		if name then table.insert(out, name) end
 	end
 	table.sort(out)
 	return out
 end
 
-function ConfigManager.Setup(window: any, opts: SetupOpts?)
-	opts = opts or {}
-	local tabName = opts.TabName or "Configs"
-	local groupTitle = opts.GroupTitle or "Config Manager"
-	local side = opts.Side or "Left"
-
-	local tab = window.Tabs and window.Tabs[tabName]
-	if not tab then
-		tab = window:AddTab(tabName, "lucide:save")
-	end
-
-	local rf = ReplicatedStorage:FindFirstChild("BlueView_ConfigRF")
-	if not rf or not rf:IsA("RemoteFunction") then
-		warn("[ConfigManager] Missing ReplicatedStorage/BlueView_ConfigRF RemoteFunction. Config UI will still show, but won't work.")
-	end
-
-	local gb = tab:AddGroupbox(groupTitle, {Side = side})
-
-	local selected = "default"
-	local configs: {string} = {}
-
-	local dropdown = gb:AddDropdown("Select Config", {"default"}, "default", function(v: string)
-		selected = v
-	end)
-
-	local nameBox = gb:AddTextbox("Name", "config name", function() end)
-
-	local function call(action: string, a: any?, b: any?)
-		if not rf then return nil end
-		local ok, res1, res2 = pcall(function()
-			return (rf :: RemoteFunction):InvokeServer(action, a, b)
-		end)
-		if not ok then
-			warn("[ConfigManager] call failed:", action, res1)
-			return nil
-		end
-		return res1, res2
-	end
-
-	local function refresh()
-		local list = call("list")
-		configs = safeList(list)
-
-		if #configs == 0 then
-			configs = {"default"}
-		end
-		dropdown.SetOptions(configs)
-
-		if table.find(configs, selected) == nil then
-			selected = configs[1]
-			dropdown.Set(selected)
-		end
-	end
-
-	gb:AddButton("Save", function()
-		local name = (nameBox.Get() :: string)
-		if name == "" then return end
-		local data = window:GetConfig()
-		local ok, err = call("save", name, data)
-		if ok == true then
-			selected = name
-			refresh()
-		else
-			warn("[ConfigManager] save failed:", err)
-		end
-	end)
-
-	gb:AddButton("Load", function()
-		local data, err = call("load", selected)
-		if typeof(data) == "table" then
-			window:LoadConfig(data :: any)
-		else
-			warn("[ConfigManager] load failed:", err)
-		end
-	end)
-
-	gb:AddButton("Delete", function()
-		local ok, err = call("delete", selected)
-		if ok == true then
-			selected = "default"
-			refresh()
-		else
-			warn("[ConfigManager] delete failed:", err)
-		end
-	end)
-
-	gb:AddButton("Rename (to Name box)", function()
-		local newName = (nameBox.Get() :: string)
-		if newName == "" then return end
-		local ok, err = call("rename", selected, newName)
-		if ok == true then
-			selected = newName
-			refresh()
-		else
-			warn("[ConfigManager] rename failed:", err)
-		end
-	end)
-
-	gb:AddButton("Refresh", function()
-		refresh()
-	end)
-
-	refresh()
-end
-
 return ConfigManager
+
