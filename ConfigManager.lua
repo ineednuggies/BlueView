@@ -22,7 +22,7 @@ export type Manager = {
 
 function ConfigManager.new(storeName: string?): Manager
 	local self = setmetatable({}, ConfigManager)
-	self.StoreName = storeName or "SpareStackUI_Configs"
+	self.StoreName = storeName or "BlueViewUI_Configs"
 	self.Store = DataStoreService:GetDataStore(self.StoreName)
 	return (self :: any) :: Manager
 end
