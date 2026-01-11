@@ -1,65 +1,92 @@
 --!strict
--- ThemeManager.lua
--- Adds a "Theme" UI into a chosen tab, for END-USERS (players) to edit theme
--- Requires BlueView.lua supports window:SetTheme + AddColorPicker
+-- ThemeManager.lua (UPDATED)
+-- Provides UI to edit Accent + Text + Background colors + Presets
 
 local ThemeManager = {}
 
-export type SetupOpts = {
-	TabName: string?,
-	GroupTitle: string?,
-	Side: ("Left"|"Right")?,
+local PRESETS = {
+	["BlueView Purple"] = function()
+		return {
+			Accent = Color3.fromRGB(154, 108, 255),
+			BG     = Color3.fromRGB(10, 9, 16),
+			BG2    = Color3.fromRGB(16, 13, 26),
+			Panel  = Color3.fromRGB(18, 15, 30),
+			Panel2 = Color3.fromRGB(13, 11, 22),
+			Stroke = Color3.fromRGB(44, 36, 70),
+			Text   = Color3.fromRGB(238, 240, 255),
+			SubText= Color3.fromRGB(170, 175, 200),
+			Muted  = Color3.fromRGB(115, 120, 150),
+		}
+	end,
+	["Midnight"] = function()
+		return {
+			Accent = Color3.fromRGB(90, 180, 255),
+			BG     = Color3.fromRGB(6, 8, 12),
+			BG2    = Color3.fromRGB(10, 12, 18),
+			Panel  = Color3.fromRGB(14, 16, 24),
+			Panel2 = Color3.fromRGB(10, 12, 18),
+			Stroke = Color3.fromRGB(36, 46, 70),
+			Text   = Color3.fromRGB(240, 247, 255),
+			SubText= Color3.fromRGB(170, 190, 210),
+			Muted  = Color3.fromRGB(110, 130, 150),
+		}
+	end,
+	["Light"] = function()
+		return {
+			Accent = Color3.fromRGB(120, 90, 255),
+			BG     = Color3.fromRGB(235, 238, 245),
+			BG2    = Color3.fromRGB(245, 247, 252),
+			Panel  = Color3.fromRGB(255, 255, 255),
+			Panel2 = Color3.fromRGB(248, 250, 255),
+			Stroke = Color3.fromRGB(190, 195, 210),
+			Text   = Color3.fromRGB(20, 22, 28),
+			SubText= Color3.fromRGB(70, 75, 90),
+			Muted  = Color3.fromRGB(110, 115, 135),
+		}
+	end,
 }
 
-function ThemeManager.Setup(window: any, opts: SetupOpts?)
-	opts = opts or {}
-	local tabName = opts.TabName or "Settings"
-	local groupTitle = opts.GroupTitle or "Theme"
-	local side = opts.Side or "Right"
+local PRESET_NAMES = {"BlueView Purple", "Midnight", "Light"}
 
-	local tab = window.Tabs and window.Tabs[tabName]
-	if not tab then
-		tab = window:AddTab(tabName, "lucide:palette")
-	end
+function ThemeManager.Setup(window: any, tab: any)
+	-- Put Theme UI inside chosen tab
+	local gb = tab:AddGroupbox("Theme", {Side = "Right"})
 
-	local gb = tab:AddGroupbox(groupTitle, {Side = side})
-	local t = window:GetTheme()
+	gb:AddDropdown("Preset Theme", PRESET_NAMES, "BlueView Purple", function(name: string)
+		local maker = PRESETS[name]
+		if maker then
+			window:SetTheme(maker())
+		end
+	end, "theme_preset")
 
-	gb:AddColorPicker("Accent Color", t.Accent, function(c)
-		window:SetTheme({ Accent = c })
-	end)
+	-- compact spacing comes from BlueView groupbox padding changes
+	gb:AddColorPicker("Accent", window:GetTheme().Accent, function(c: Color3)
+		local t = window:GetTheme()
+		t.Accent = c
+		window:SetTheme(t)
+	end, "theme_accent")
 
-	gb:AddColorPicker("Text Color", t.Text, function(c)
-		window:SetTheme({ Text = c })
-	end)
+	gb:AddColorPicker("Text", window:GetTheme().Text, function(c: Color3)
+		local t = window:GetTheme()
+		t.Text = c
+		-- derive SubText/Muted as “grey versions” if you want:
+		-- keep your existing if you prefer, but here’s a simple blend:
+		t.SubText = t.Text:Lerp(Color3.new(1,1,1), 0.25)
+		t.Muted = t.Text:Lerp(Color3.new(0,0,0), 0.55)
+		window:SetTheme(t)
+	end, "theme_text")
 
-	gb:AddColorPicker("SubText Color", t.SubText, function(c)
-		window:SetTheme({ SubText = c })
-	end)
+	gb:AddColorPicker("Background", window:GetTheme().BG, function(c: Color3)
+		local t = window:GetTheme()
+		t.BG = c
+		window:SetTheme(t)
+	end, "theme_bg")
 
-	gb:AddColorPicker("Muted Color", t.Muted, function(c)
-		window:SetTheme({ Muted = c })
-	end)
-
-	gb:AddColorPicker("Background Color", t.BG, function(c)
-		window:SetTheme({ BG = c })
-	end)
-
-	gb:AddColorPicker("Background 2", t.BG2, function(c)
-		window:SetTheme({ BG2 = c })
-	end)
-
-	gb:AddColorPicker("Panel Color", t.Panel, function(c)
-		window:SetTheme({ Panel = c })
-	end)
-
-	gb:AddColorPicker("Panel 2", t.Panel2, function(c)
-		window:SetTheme({ Panel2 = c })
-	end)
-
-	gb:AddColorPicker("Stroke Color", t.Stroke, function(c)
-		window:SetTheme({ Stroke = c })
-	end)
+	gb:AddColorPicker("Panel", window:GetTheme().Panel, function(c: Color3)
+		local t = window:GetTheme()
+		t.Panel = c
+		window:SetTheme(t)
+	end, "theme_panel")
 end
 
 return ThemeManager
