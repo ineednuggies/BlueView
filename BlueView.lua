@@ -1,27 +1,16 @@
 --!strict
--- BlueView.lua (SpareStackUI) - Updated
--- ✅ Categories in sidebar
--- ✅ Inactive tabs are grey (active is bright)
--- ✅ Drag no longer snaps back to center
--- ✅ Main search textbox starts empty
--- ✅ Dropdowns open directly under the clicked dropdown
--- ✅ Multi-dropdown uses checkbox checkmarks (no Done button)
--- ✅ Removed slider/button glow; kept subtle radial glow for toggles only
--- ✅ Selected tab bar correct on first tab + after switches
--- ✅ ColorPicker supports white + presets
--- ✅ Theme binding hooks for ThemeManager + ConfigManager
+-- BlueView.lua (Updated)
 
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
 local UILib = {}
 UILib.__index = UILib
 
---////////////////////////////////////////////////////////////
--- Utils
---////////////////////////////////////////////////////////////
+--// Utils
 local function tween(inst: Instance, ti: TweenInfo, props: {[string]: any})
 	local t = TweenService:Create(inst, ti, props)
 	t:Play()
@@ -63,17 +52,14 @@ local function clamp01(x: number): number
 	return x
 end
 
---////////////////////////////////////////////////////////////
--- Radial glow (single subtle glow)
---////////////////////////////////////////////////////////////
-local GLOW_IMG = "rbxassetid://93208570840427" -- set to your radial glow png
+--// Radial glow (subtle, single layer)
+local GLOW_IMG = "rbxassetid://93208570840427" -- replace with your radial png if desired
 
 local function addRadialGlowSimple(host: GuiObject, color: Color3, pad: number, alpha: number)
 	local disabled = (GLOW_IMG == "" or GLOW_IMG == "rbxassetid://0")
 	local parent = host.Parent
 	if not parent or not parent:IsA("GuiObject") then
-		local function noop(_: number) end
-		return noop, function() end
+		return function(_: number) end, function() end
 	end
 
 	local layer = mk("Frame", {
@@ -139,9 +125,7 @@ local function addRadialGlowSimple(host: GuiObject, color: Color3, pad: number, 
 	return setIntensity, destroy
 end
 
---////////////////////////////////////////////////////////////
--- Icons (Lucide-ready)
---////////////////////////////////////////////////////////////
+--// Icons (lucide-ready)
 export type IconProvider = (name: string) -> string?
 
 local function resolveIcon(iconProvider: IconProvider?, icon: string?): string?
@@ -167,9 +151,7 @@ local function makeIcon(imageId: string?, size: number, transparency: number?)
 	})
 end
 
---////////////////////////////////////////////////////////////
--- Theme
---////////////////////////////////////////////////////////////
+--// Theme
 export type Theme = {
 	Accent: Color3,
 	BG: Color3,
@@ -191,12 +173,10 @@ local DefaultTheme: Theme = {
 	Stroke = Color3.fromRGB(44, 36, 70),
 	Text   = Color3.fromRGB(238, 240, 255),
 	SubText= Color3.fromRGB(170, 175, 200),
-	Muted  = Color3.fromRGB(115, 120, 150), -- used for inactive tab/cats
+	Muted  = Color3.fromRGB(115, 120, 150),
 }
 
---////////////////////////////////////////////////////////////
--- Types
---////////////////////////////////////////////////////////////
+--// Types
 export type WindowOptions = {
 	Title: string?,
 	Width: number?,
@@ -207,7 +187,6 @@ export type WindowOptions = {
 	IconProvider: IconProvider?,
 	KillOnClose: boolean?,
 	OnKill: (() -> ())?,
-
 	AutoScale: boolean?,
 	MinScale: number?,
 	MaxScale: number?,
@@ -219,6 +198,7 @@ export type Window = {
 	Gui: ScreenGui,
 	Root: Frame,
 	IsKilled: boolean,
+	Tabs: {[string]: any},
 
 	Destroy: (self: Window) -> (),
 	Toggle: (self: Window, state: boolean?) -> (),
@@ -246,16 +226,45 @@ TabMT.__index = TabMT
 local GroupMT = {}
 GroupMT.__index = GroupMT
 
---////////////////////////////////////////////////////////////
--- Theme binding (minimal, practical)
---////////////////////////////////////////////////////////////
-type ThemeBinding = {
-	inst: Instance,
-	prop: string,
-	key: string,
-}
+--// Theme binding
+type ThemeBinding = { inst: Instance, prop: string, key: string }
 local function setProp(inst: Instance, prop: string, value: any)
 	(inst :: any)[prop] = value
+end
+
+--// Overlay attach helper (fixes dropdown/colorpicker clipping)
+local function attachToOverlay(window: any, anchor: GuiObject, panel: Frame)
+	local overlay: Frame = window._ui.overlay
+	if not overlay then return function() end end
+
+	panel.Parent = overlay
+
+	local conn: RBXScriptConnection? = nil
+
+	local function sync()
+		if not anchor.Parent or not panel.Parent then return end
+		local oPos = overlay.AbsolutePosition
+		local aPos = anchor.AbsolutePosition
+		local aSize = anchor.AbsoluteSize
+
+		panel.Position = UDim2.fromOffset(
+			(aPos.X - oPos.X),
+			(aPos.Y - oPos.Y) + aSize.Y + 6
+		)
+
+		panel.Size = UDim2.new(0, aSize.X, panel.Size.Y.Scale, panel.Size.Y.Offset)
+	end
+
+	conn = RunService.RenderStepped:Connect(sync)
+	sync()
+
+	return function()
+		if conn then conn:Disconnect() end
+	end
+end
+
+local function makeRow(height: number)
+	return mk("Frame", {BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, height)})
 end
 
 --////////////////////////////////////////////////////////////
@@ -312,7 +321,18 @@ function UILib.new(options: WindowOptions): Window
 	}) :: UISizeConstraint
 	local origMinSize = sizeConstraint.MinSize
 
-	-- Autoscale
+	-- ✅ Overlay layer (fixes dropdown/colorpicker underlay & clipping)
+	local overlay = mk("Frame", {
+		Name = "Overlay",
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		Position = UDim2.fromScale(0, 0),
+		ZIndex = 1000,
+		ClipsDescendants = false,
+		Parent = root,
+	})
+
+	-- Autoscale (does NOT snap back to center)
 	local autoScale = if options.AutoScale == nil then true else options.AutoScale
 	local uiScale = mk("UIScale", {Scale = 1, Parent = root})
 	local minScale = options.MinScale or 0.68
@@ -326,7 +346,6 @@ function UILib.new(options: WindowOptions): Window
 		local s = math.min(vp.X / baseW, vp.Y / baseH, 1)
 		s = math.clamp(s * 0.94, minScale, maxScale)
 		uiScale.Scale = s
-		-- ✅ DO NOT force root.Position back to center (fixes snap-back after dragging)
 	end
 	updateScale()
 	task.spawn(function()
@@ -493,7 +512,7 @@ function UILib.new(options: WindowOptions): Window
 		Parent = tabList,
 	})
 
-	mk("UIListLayout", {
+	local tabButtonsLayout = mk("UIListLayout", {
 		SortOrder = Enum.SortOrder.LayoutOrder,
 		Padding = UDim.new(0, 6),
 		Parent = tabButtons,
@@ -557,7 +576,7 @@ function UILib.new(options: WindowOptions): Window
 		Position = UDim2.new(0, 26, 0, 0),
 		Size = UDim2.new(1, -26, 1, 0),
 		Font = Enum.Font.Gotham,
-		Text = "", -- ✅ starts empty
+		Text = "", -- starts empty
 		TextSize = 14,
 		TextColor3 = theme.Text,
 		PlaceholderText = "Search element",
@@ -606,9 +625,7 @@ function UILib.new(options: WindowOptions): Window
 
 	self.Tabs = {}
 	self._tabOrder = {}
-	self._tabCount = 0
 	self._layoutCounter = 0
-
 	self.SelectedTab = nil
 	self._connections = {}
 	self._minimized = false
@@ -621,17 +638,18 @@ function UILib.new(options: WindowOptions): Window
 
 	self._themeBindings = {} :: {ThemeBinding}
 	self._flags = {} :: {[string]: {get: () -> any, set: (any) -> ()}}
-
 	self._categories = {} :: {[string]: boolean}
 
 	self._ui = {
 		gui = gui,
 		root = root,
+		overlay = overlay,
 		topbar = topbar,
 		contentWrap = contentWrap,
 		sidebar = sidebar,
 		tabList = tabList,
 		tabButtons = tabButtons,
+		tabButtonsLayout = tabButtonsLayout,
 		selectedBar = selectedBar,
 		tabsContainer = tabsContainer,
 		searchInput = searchInput,
@@ -641,54 +659,48 @@ function UILib.new(options: WindowOptions): Window
 		canvasBg = canvasBg,
 		searchBox = searchBox,
 		searchIcon = searchIcon,
+		btnWrap = btnWrap,
 	}
 
-	--////////////////////////////////////////////////////////////
--- Selected bar updater (handles categories + initial layout)
---////////////////////////////////////////////////////////////
-		self._barToken = 0
-		
-		function self:_UpdateSelectedBar(instant: boolean?)
-			local tab = self.SelectedTab
-			if not tab then return end
-		
-			local sb: Frame = self._ui.selectedBar
-			local ref: Frame = self._ui.tabList -- IMPORTANT: reference frame for positioning
-			if not sb or not ref then return end
-			if not tab._btn or not tab._btn.Parent then return end
-		
-			local barH = sb.AbsoluteSize.Y
-			if barH <= 0 then barH = 34 end
-		
-			local btnAbsY = tab._btn.AbsolutePosition.Y
-			local refAbsY = ref.AbsolutePosition.Y
-			local btnH = tab._btn.AbsoluteSize.Y
-		
-			local y = (btnAbsY - refAbsY) + math.floor((btnH - barH) / 2)
-		
-			if instant then
-				sb.Position = UDim2.new(0, -6, 0, y)
-			else
-				tween(sb, TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-					Position = UDim2.new(0, -6, 0, y),
-				})
-			end
-		end
-		
-		function self:_UpdateSelectedBarDeferred(instant: boolean?)
-			self._barToken += 1
-			local token = self._barToken
-		
-			task.spawn(function()
-				-- wait for UIListLayout to settle (fixes "first tab slightly above")
-				RunService.RenderStepped:Wait()
-				RunService.RenderStepped:Wait()
-				if token ~= self._barToken then return end
-				self:_UpdateSelectedBar(instant)
-			end)
-		end
+	-- Selected bar updater
+	self._barToken = 0
+	function self:_UpdateSelectedBar(instant: boolean?)
+		local tab = self.SelectedTab
+		if not tab or not tab._btn or not tab._btn.Parent then return end
 
+		local sb: Frame = self._ui.selectedBar
+		local ref: Frame = self._ui.tabList
+		if not sb or not ref then return end
 
+		local barH = sb.AbsoluteSize.Y
+		if barH <= 0 then barH = 34 end
+
+		local btnAbsY = tab._btn.AbsolutePosition.Y
+		local refAbsY = ref.AbsolutePosition.Y
+		local btnH = tab._btn.AbsoluteSize.Y
+		local y = (btnAbsY - refAbsY) + math.floor((btnH - barH) / 2)
+
+		if instant then
+			sb.Position = UDim2.new(0, -6, 0, y)
+		else
+			tween(sb, TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+				Position = UDim2.new(0, -6, 0, y),
+			})
+		end
+	end
+
+	function self:_UpdateSelectedBarDeferred(instant: boolean?)
+		self._barToken += 1
+		local token = self._barToken
+		task.spawn(function()
+			RunService.RenderStepped:Wait()
+			RunService.RenderStepped:Wait()
+			if token ~= self._barToken then return end
+			self:_UpdateSelectedBar(instant)
+		end)
+	end
+
+	-- Theme binding
 	function self:_BindTheme(inst: Instance, prop: string, key: string)
 		table.insert(self._themeBindings, {inst = inst, prop = prop, key = key})
 	end
@@ -702,7 +714,7 @@ function UILib.new(options: WindowOptions): Window
 		end
 	end
 
-	-- Theme binds for core
+	-- Core theme binds
 	self:_BindTheme(root, "BackgroundColor3", "BG")
 	self:_BindTheme((root:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 	self:_BindTheme(topbar, "BackgroundColor3", "Panel2")
@@ -715,7 +727,12 @@ function UILib.new(options: WindowOptions): Window
 	self:_BindTheme(searchInput, "TextColor3", "Text")
 	self:_BindTheme(searchInput, "PlaceholderColor3", "Muted")
 
-	-- Dragging
+	-- Keep bar correct when layout changes
+	tabButtonsLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+		self:_UpdateSelectedBarDeferred(true)
+	end)
+
+	-- Dragging (no snap-back)
 	do
 		local dragging = false
 		local dragStart: Vector2? = nil
@@ -753,7 +770,7 @@ function UILib.new(options: WindowOptions): Window
 		end))
 	end
 
-	-- Minimize / Shrink
+	-- Minimize
 	local function applyMinimize(state: boolean)
 		self._minToken += 1
 		local token = self._minToken
@@ -796,7 +813,7 @@ function UILib.new(options: WindowOptions): Window
 		if input.KeyCode == self._toggleKey then self:Toggle() end
 	end))
 
-	-- Search filter
+	-- Search filter (groupbox titles)
 	searchInput:GetPropertyChangedSignal("Text"):Connect(function()
 		local tab = self.SelectedTab
 		if not tab then return end
@@ -838,7 +855,7 @@ end
 function WindowMT:SetTheme(newTheme: Theme)
 	self:_ApplyTheme(newTheme)
 
-	-- also refresh tab colors instantly
+	-- refresh tab colors instantly
 	for _, tab in ipairs(self._tabOrder) do
 		if self.SelectedTab == tab then
 			tab._btnLabel.TextColor3 = self.Theme.Text
@@ -848,7 +865,10 @@ function WindowMT:SetTheme(newTheme: Theme)
 			if tab._btnIcon then tab._btnIcon.ImageTransparency = 0.45 end
 		end
 	end
+
+	self:_UpdateSelectedBarDeferred(true)
 end
+
 function WindowMT:GetTheme(): Theme
 	return self.Theme
 end
@@ -895,15 +915,15 @@ function WindowMT:AddCategory(name: string)
 	})
 	self:_BindTheme(header, "TextColor3", "Muted")
 
-	-- spacer like the screenshot grouping
 	self._layoutCounter += 1
-	local spacer = mk("Frame", {
+	mk("Frame", {
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, 2),
 		LayoutOrder = self._layoutCounter,
 		ZIndex = 7,
 		Parent = self._ui.tabButtons,
 	})
+
 	self:_UpdateSelectedBarDeferred(true)
 end
 
@@ -929,7 +949,7 @@ local function makeSidebarTab(theme: Theme, iconProvider: IconProvider?, name: s
 	mk("UIPadding", {PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), Parent = btn})
 
 	local iconId = resolveIcon(iconProvider, icon)
-	local iconImg = makeIcon(iconId, 18, 0.45) -- ✅ inactive icon is “greyed”
+	local iconImg = makeIcon(iconId, 18, 0.45)
 	iconImg.ZIndex = 3
 	iconImg.Parent = btn
 	iconImg.Position = UDim2.new(0, 10, 0.5, -9)
@@ -942,7 +962,7 @@ local function makeSidebarTab(theme: Theme, iconProvider: IconProvider?, name: s
 		Text = name,
 		TextSize = 14,
 		Font = Enum.Font.GothamSemibold,
-		TextColor3 = theme.Muted, -- ✅ inactive text grey
+		TextColor3 = theme.Muted,
 		ZIndex = 3,
 		Parent = btn,
 	})
@@ -985,10 +1005,6 @@ function WindowMT:AddTab(name: string, icon: string?, category: string?)
 	})
 	mk("UIPadding", {PaddingTop=UDim.new(0,10),PaddingBottom=UDim.new(0,10),PaddingLeft=UDim.new(0,10),PaddingRight=UDim.new(0,10),Parent=colLeft})
 	mk("UIListLayout", {SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,10),Parent=colLeft})
-		tabLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-			self:_UpdateSelectedBarDeferred(true)
-		end)
-
 
 	local colRight = mk("ScrollingFrame", {
 		Name = "Right",
@@ -1020,8 +1036,7 @@ function WindowMT:AddTab(name: string, icon: string?, category: string?)
 	self.Tabs[name] = tab
 	table.insert(self._tabOrder, tab)
 
-	-- theme binds for tab
-	self:_BindTheme(label, "TextColor3", "Muted") -- default inactive is muted; selected overrides
+	self:_BindTheme(label, "TextColor3", "Muted")
 	self:_BindTheme(bg, "BackgroundColor3", "Panel")
 
 	btn.MouseButton1Click:Connect(function()
@@ -1031,14 +1046,14 @@ function WindowMT:AddTab(name: string, icon: string?, category: string?)
 	btn.MouseEnter:Connect(function()
 		if self.SelectedTab ~= tab then
 			tween(bg, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 0.55})
-			tween(label, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextColor3 = theme.Text})
+			tween(label, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextColor3 = self.Theme.Text})
 			if iconImg then iconImg.ImageTransparency = 0.25 end
 		end
 	end)
 	btn.MouseLeave:Connect(function()
 		if self.SelectedTab ~= tab then
 			tween(bg, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
-			tween(label, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextColor3 = theme.Muted})
+			tween(label, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextColor3 = self.Theme.Muted})
 			if iconImg then iconImg.ImageTransparency = 0.45 end
 		end
 	end)
@@ -1048,7 +1063,6 @@ function WindowMT:AddTab(name: string, icon: string?, category: string?)
 			self:SelectTab(name, true)
 			self:_UpdateSelectedBarDeferred(true)
 		end)
-	
 	end
 
 	return tab
@@ -1069,7 +1083,6 @@ function WindowMT:SelectTab(name: string, instant: boolean?)
 			tween(t._btnLabel, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextColor3 = self.Theme.Muted})
 			if t._btnIcon then t._btnIcon.ImageTransparency = 0.45 end
 		end
-			self:_UpdateSelectedBarDeferred(instant == true)
 	end
 
 	tab._page.Visible = true
@@ -1085,61 +1098,29 @@ function WindowMT:SelectTab(name: string, instant: boolean?)
 		if tab._btnIcon then tab._btnIcon.ImageTransparency = 0.05 end
 	end
 
-	-- ✅ Selected bar position relative to tabList (works with categories too)
-	task.defer(function()
-		task.wait(0.05)
-		local sb: Frame = self._ui.selectedBar
-		local tabList: Frame = self._ui.tabList
-
-		local barH = 34
-		local btnAbsY = tab._btn.AbsolutePosition.Y
-		local listAbsY = tabList.AbsolutePosition.Y
-		local btnH = tab._btn.AbsoluteSize.Y
-
-		local y = (btnAbsY - listAbsY) + math.floor((btnH - barH) / 2)
-
-		if instant then
-			sb.Position = UDim2.new(0, -6, 0, y)
-			sb.Size = UDim2.new(0, 3, 0, barH)
-		else
-			tween(sb, TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-				Position = UDim2.new(0, -6, 0, y),
-				Size = UDim2.new(0, 3, 0, barH),
-			})
-		end
-	end)
+	self:_UpdateSelectedBarDeferred(instant == true)
 end
 
 --////////////////////////////////////////////////////////////
--- Groupbox
+-- Groupbox + Controls (Toggle/Slider/Button/Dropdown/Multi/ColorPicker)
 --////////////////////////////////////////////////////////////
 local function makeGroupbox(theme: Theme, iconProvider: IconProvider?, title: string)
 	local frame = mk("Frame", {
 		BackgroundColor3 = theme.Panel,
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 0, 60),
-		ClipsDescendants = true,
+		ClipsDescendants = true, -- ok (overlay handles popovers)
 	})
 	withUICorner(frame, 12)
 	withUIStroke(frame, theme.Stroke, 0.35, 1)
 
-	local inner = mk("Frame", {
-		Name = "Inner",
-		BackgroundTransparency = 1,
-		Size = UDim2.fromScale(1, 1),
-		Parent = frame,
-	})
+	local inner = mk("Frame", {Name="Inner", BackgroundTransparency=1, Size=UDim2.fromScale(1,1), Parent=frame})
 	local PAD = 10
 	mk("UIPadding", {PaddingTop=UDim.new(0,PAD),PaddingBottom=UDim.new(0,PAD),PaddingLeft=UDim.new(0,PAD),PaddingRight=UDim.new(0,PAD),Parent=inner})
 
-	local header = mk("Frame", {
-		Name = "Header",
-		BackgroundTransparency = 1,
-		Size = UDim2.new(1, 0, 0, 26),
-		Parent = inner,
-	})
+	local header = mk("Frame", {Name="Header", BackgroundTransparency=1, Size=UDim2.new(1,0,0,26), Parent=inner})
 
-	mk("TextLabel", {
+	local titleLbl = mk("TextLabel", {
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, -34, 1, 0),
 		TextXAlignment = Enum.TextXAlignment.Left,
@@ -1192,16 +1173,11 @@ local function makeGroupbox(theme: Theme, iconProvider: IconProvider?, title: st
 		Parent = inner,
 	})
 
-	local content = mk("Frame", {
-		Name = "Content",
-		BackgroundTransparency = 1,
-		Size = UDim2.new(1, 0, 0, 0),
-		Parent = contentMask,
-	})
+	local content = mk("Frame", {Name="Content", BackgroundTransparency=1, Size=UDim2.new(1,0,0,0), Parent=contentMask})
 
 	local list = mk("UIListLayout", {
 		SortOrder = Enum.SortOrder.LayoutOrder,
-		Padding = UDim.new(0, 6), -- slightly tighter
+		Padding = UDim.new(0, 6),
 		Parent = content,
 	})
 
@@ -1213,7 +1189,7 @@ local function makeGroupbox(theme: Theme, iconProvider: IconProvider?, title: st
 		Parent = content,
 	})
 
-	return frame, contentMask, content, list, collapseBtn, icon, fallback, chevronDown, chevronRight, PAD, GAP
+	return frame, contentMask, content, list, collapseBtn, icon, fallback, chevronDown, chevronRight, PAD, GAP, titleLbl
 end
 
 function TabMT:AddGroupbox(title: string, opts: {Side: ("Left"|"Right")?, InitialCollapsed: boolean?}?)
@@ -1221,7 +1197,7 @@ function TabMT:AddGroupbox(title: string, opts: {Side: ("Left"|"Right")?, Initia
 	local side = opts.Side or "Left"
 
 	local theme: Theme = self._window.Theme
-	local frame, contentMask, content, list, collapseBtn, icon, fallback, chevronDown, chevronRight, PAD, GAP =
+	local frame, contentMask, content, list, collapseBtn, icon, fallback, chevronDown, chevronRight, PAD, GAP, titleLbl =
 		makeGroupbox(theme, self._window.IconProvider, title)
 
 	frame.Parent = self._cols[side]
@@ -1237,12 +1213,16 @@ function TabMT:AddGroupbox(title: string, opts: {Side: ("Left"|"Right")?, Initia
 	gb._collapsed = false
 	table.insert(self._groupboxes, gb)
 
+	self._window:_BindTheme(frame, "BackgroundColor3", "Panel")
+	self._window:_BindTheme((frame:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
+	self._window:_BindTheme(titleLbl, "TextColor3", "Text")
+
 	local HEADER_H = 26
 	local function setIconCollapsed(state: boolean)
 		if chevronDown then
-			icon.Image = state and (chevronRight or chevronDown) or chevronDown
+			(icon :: ImageLabel).Image = state and (chevronRight or chevronDown) or chevronDown
 		else
-			fallback.Text = state and ">" or "v"
+			(fallback :: TextLabel).Text = state and ">" or "v"
 		end
 	end
 
@@ -1284,18 +1264,9 @@ function TabMT:AddGroupbox(title: string, opts: {Side: ("Left"|"Right")?, Initia
 	return gb
 end
 
---////////////////////////////////////////////////////////////
--- Controls helpers
---////////////////////////////////////////////////////////////
-local function makeRow(height: number)
-	return mk("Frame", {BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, height)})
-end
-
---////////////////////////////////////////////////////////////
--- Toggle (kept subtle glow)
---////////////////////////////////////////////////////////////
+-- Toggle
 function GroupMT:AddToggle(text: string, default: boolean?, callback: ((boolean) -> ())?, flag: string?)
-	local theme: Theme = self._tab._window.Theme
+	local window: any = self._tab._window
 	local on = default == true
 
 	local row = makeRow(40)
@@ -1308,10 +1279,10 @@ function GroupMT:AddToggle(text: string, default: boolean?, callback: ((boolean)
 		Text = text,
 		TextSize = 14,
 		Font = Enum.Font.Gotham,
-		TextColor3 = theme.Text,
+		TextColor3 = window.Theme.Text,
 		Parent = row,
 	})
-	self._tab._window:_BindTheme(label, "TextColor3", "Text")
+	window:_BindTheme(label, "TextColor3", "Text")
 
 	local btn = mk("TextButton", {
 		BackgroundTransparency = 1,
@@ -1324,16 +1295,15 @@ function GroupMT:AddToggle(text: string, default: boolean?, callback: ((boolean)
 	})
 
 	local track = mk("Frame", {
-		BackgroundColor3 = on and theme.Accent or theme.Stroke,
+		BackgroundColor3 = on and window.Theme.Accent or window.Theme.Stroke,
 		BorderSizePixel = 0,
 		Size = UDim2.fromScale(1, 1),
 		ZIndex = 20,
 		Parent = btn,
 	})
 	withUICorner(track, 999)
-	self._tab._window:_BindTheme(track, "BackgroundColor3", "Stroke")
 
-	local setGlow = addRadialGlowSimple(track, theme.Accent, 18, 0.86)
+	local setGlow = addRadialGlowSimple(track, window.Theme.Accent, 18, 0.86)
 	setGlow(on and 1 or 0)
 
 	local knob = mk("Frame", {
@@ -1348,8 +1318,9 @@ function GroupMT:AddToggle(text: string, default: boolean?, callback: ((boolean)
 
 	local function set(state: boolean, fire: boolean?)
 		on = state
+		local t = window.Theme
 		tween(track, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			BackgroundColor3 = on and theme.Accent or theme.Stroke
+			BackgroundColor3 = on and t.Accent or t.Stroke
 		})
 		tween(knob, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 			Position = on and UDim2.new(1, -24, 0.5, -10) or UDim2.new(0, 4, 0.5, -10),
@@ -1361,7 +1332,7 @@ function GroupMT:AddToggle(text: string, default: boolean?, callback: ((boolean)
 	btn.MouseButton1Click:Connect(function() set(not on, true) end)
 
 	if flag and flag ~= "" then
-		self._tab._window:RegisterFlag(flag, function() return on end, function(v)
+		window:RegisterFlag(flag, function() return on end, function(v)
 			set(v == true, false)
 		end)
 	end
@@ -1369,11 +1340,9 @@ function GroupMT:AddToggle(text: string, default: boolean?, callback: ((boolean)
 	return {Set = function(v: boolean) set(v, true) end, Get = function() return on end}
 end
 
---////////////////////////////////////////////////////////////
--- Slider (NO glow now)
---////////////////////////////////////////////////////////////
+-- Slider
 function GroupMT:AddSlider(text: string, min: number, max: number, default: number?, step: number?, callback: ((number) -> ())?, flag: string?)
-	local theme: Theme = self._tab._window.Theme
+	local window: any = self._tab._window
 	step = step or 1
 	local value = math.clamp(default or min, min, max)
 
@@ -1387,10 +1356,10 @@ function GroupMT:AddSlider(text: string, min: number, max: number, default: numb
 		Text = text,
 		TextSize = 14,
 		Font = Enum.Font.Gotham,
-		TextColor3 = theme.Text,
+		TextColor3 = window.Theme.Text,
 		Parent = row,
 	})
-	self._tab._window:_BindTheme(label, "TextColor3", "Text")
+	window:_BindTheme(label, "TextColor3", "Text")
 
 	local valLabel = mk("TextLabel", {
 		BackgroundTransparency = 1,
@@ -1401,13 +1370,13 @@ function GroupMT:AddSlider(text: string, min: number, max: number, default: numb
 		Text = string.format("%.3f", value),
 		TextSize = 13,
 		Font = Enum.Font.Gotham,
-		TextColor3 = theme.SubText,
+		TextColor3 = window.Theme.SubText,
 		Parent = row,
 	})
-	self._tab._window:_BindTheme(valLabel, "TextColor3", "SubText")
+	window:_BindTheme(valLabel, "TextColor3", "SubText")
 
 	local bar = mk("Frame", {
-		BackgroundColor3 = theme.Panel2,
+		BackgroundColor3 = window.Theme.Panel2,
 		BorderSizePixel = 0,
 		Position = UDim2.new(0, 0, 0, 30),
 		Size = UDim2.new(1, 0, 0, 8),
@@ -1415,19 +1384,19 @@ function GroupMT:AddSlider(text: string, min: number, max: number, default: numb
 		Parent = row,
 	})
 	withUICorner(bar, 999)
-	withUIStroke(bar, theme.Stroke, 0.5, 1)
-	self._tab._window:_BindTheme(bar, "BackgroundColor3", "Panel2")
-	self._tab._window:_BindTheme((bar:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
+	withUIStroke(bar, window.Theme.Stroke, 0.5, 1)
+	window:_BindTheme(bar, "BackgroundColor3", "Panel2")
+	window:_BindTheme((bar:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 
 	local fill = mk("Frame", {
-		BackgroundColor3 = theme.Accent,
+		BackgroundColor3 = window.Theme.Accent,
 		BorderSizePixel = 0,
 		Size = UDim2.new(0, 0, 1, 0),
 		ZIndex = 21,
 		Parent = bar,
 	})
 	withUICorner(fill, 999)
-	self._tab._window:_BindTheme(fill, "BackgroundColor3", "Accent")
+	window:_BindTheme(fill, "BackgroundColor3", "Accent")
 
 	local thumb = mk("Frame", {
 		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
@@ -1482,7 +1451,7 @@ function GroupMT:AddSlider(text: string, min: number, max: number, default: numb
 	end)
 
 	if flag and flag ~= "" then
-		self._tab._window:RegisterFlag(flag, function() return value end, function(v)
+		window:RegisterFlag(flag, function() return value end, function(v)
 			apply(tonumber(v) or value, false)
 		end)
 	end
@@ -1490,39 +1459,37 @@ function GroupMT:AddSlider(text: string, min: number, max: number, default: numb
 	return {Set = function(v: number) apply(v, true) end, Get = function() return value end}
 end
 
---////////////////////////////////////////////////////////////
--- Button (NO glow now)
---////////////////////////////////////////////////////////////
+-- Button
 function GroupMT:AddButton(text: string, callback: (() -> ())?)
-	local theme: Theme = self._tab._window.Theme
+	local window: any = self._tab._window
 
 	local row = makeRow(42)
 	row.Parent = self._content
 
 	local btn = mk("TextButton", {
-		BackgroundColor3 = theme.Panel2,
+		BackgroundColor3 = window.Theme.Panel2,
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 1, 0),
 		Text = text,
 		TextSize = 14,
 		Font = Enum.Font.GothamSemibold,
-		TextColor3 = theme.Text,
+		TextColor3 = window.Theme.Text,
 		AutoButtonColor = false,
 		ZIndex = 20,
 		Parent = row,
 	})
 	withUICorner(btn, 12)
-	withUIStroke(btn, theme.Stroke, 0.35, 1)
+	withUIStroke(btn, window.Theme.Stroke, 0.35, 1)
 
-	self._tab._window:_BindTheme(btn, "BackgroundColor3", "Panel2")
-	self._tab._window:_BindTheme(btn, "TextColor3", "Text")
-	self._tab._window:_BindTheme((btn:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
+	window:_BindTheme(btn, "BackgroundColor3", "Panel2")
+	window:_BindTheme(btn, "TextColor3", "Text")
+	window:_BindTheme((btn:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 
 	btn.MouseEnter:Connect(function()
-		tween(btn, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = theme.Panel})
+		tween(btn, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = window.Theme.Panel})
 	end)
 	btn.MouseLeave:Connect(function()
-		tween(btn, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = theme.Panel2})
+		tween(btn, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = window.Theme.Panel2})
 	end)
 	btn.MouseButton1Click:Connect(function()
 		if callback then task.spawn(callback) end
@@ -1531,21 +1498,19 @@ function GroupMT:AddButton(text: string, callback: (() -> ())?)
 	return btn
 end
 
---////////////////////////////////////////////////////////////
--- Dropdown + MultiDropdown (inline under control + search bar)
---////////////////////////////////////////////////////////////
-local function makeDropdownBase(window: any, theme: Theme, row: Frame)
-	row.ClipsDescendants = false
+-- Dropdown base (overlay popover)
+local function makeDropdownBase(window: any, anchor: GuiObject)
+	local theme: Theme = window.Theme
 
 	local panel = mk("Frame", {
 		BackgroundColor3 = theme.Panel,
 		BorderSizePixel = 0,
-		Position = UDim2.new(0, 0, 1, 6),
-		Size = UDim2.new(1, 0, 0, 0),
+		Position = UDim2.fromOffset(0, 0),
+		Size = UDim2.new(0, 0, 0, 0),
 		ClipsDescendants = true,
-		ZIndex = 200,
+		ZIndex = 1001,
 		Visible = false,
-		Parent = row, -- ✅ directly under the dropdown row
+		Parent = window._ui.overlay,
 	})
 	withUICorner(panel, 10)
 	withUIStroke(panel, theme.Stroke, 0.45, 1)
@@ -1558,7 +1523,7 @@ local function makeDropdownBase(window: any, theme: Theme, row: Frame)
 		BorderSizePixel = 0,
 		Position = UDim2.fromOffset(10, 10),
 		Size = UDim2.new(1, -20, 0, 34),
-		Text = "", -- ✅ empty
+		Text = "",
 		PlaceholderText = "Search...",
 		PlaceholderColor3 = theme.Muted,
 		ClearTextOnFocus = false,
@@ -1566,7 +1531,7 @@ local function makeDropdownBase(window: any, theme: Theme, row: Frame)
 		TextSize = 14,
 		TextColor3 = theme.Text,
 		TextXAlignment = Enum.TextXAlignment.Left,
-		ZIndex = 201,
+		ZIndex = 1002,
 		Parent = panel,
 	})
 	withUICorner(search, 10)
@@ -1586,19 +1551,26 @@ local function makeDropdownBase(window: any, theme: Theme, row: Frame)
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		ScrollBarThickness = 3,
 		ScrollBarImageTransparency = 0.2,
-		ZIndex = 201,
+		ZIndex = 1002,
 		Parent = panel,
 	})
 	mk("UIPadding", {PaddingLeft=UDim.new(0,10),PaddingRight=UDim.new(0,10),PaddingTop=UDim.new(0,6),PaddingBottom=UDim.new(0,10),Parent=listFrame})
 	local layout = mk("UIListLayout", {SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6),Parent=listFrame})
 
-	return panel, search, listFrame, layout
+	local detach = function() end
+	local function startFollow()
+		detach = attachToOverlay(window, anchor, panel)
+	end
+	local function stopFollow()
+		detach()
+	end
+
+	return panel, search, listFrame, layout, startFollow, stopFollow
 end
 
 function GroupMT:AddDropdown(text: string, items: {string}, default: string?, callback: ((string) -> ())?, flag: string?)
-	local theme: Theme = self._tab._window.Theme
 	local window: any = self._tab._window
-
+	local theme: Theme = window.Theme
 	local selected = default or (items[1] or "")
 
 	local row = makeRow(44)
@@ -1634,7 +1606,7 @@ function GroupMT:AddDropdown(text: string, items: {string}, default: string?, ca
 	window:_BindTheme(btn, "TextColor3", "Text")
 	window:_BindTheme((btn:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 
-	local panel, search, listFrame, layout = makeDropdownBase(window, theme, row)
+	local panel, search, listFrame, layout, startFollow, stopFollow = makeDropdownBase(window, btn)
 
 	local open = false
 	local PANEL_MAX = 220
@@ -1647,19 +1619,19 @@ function GroupMT:AddDropdown(text: string, items: {string}, default: string?, ca
 		for _, it in ipairs(items) do
 			if q == "" or string.find(string.lower(it), q, 1, true) then
 				local itemBtn = mk("TextButton", {
-					BackgroundColor3 = theme.Panel2,
+					BackgroundColor3 = window.Theme.Panel2,
 					BorderSizePixel = 0,
 					Size = UDim2.new(1, 0, 0, 30),
 					Text = it,
 					TextSize = 13,
 					Font = Enum.Font.Gotham,
-					TextColor3 = theme.Text,
+					TextColor3 = window.Theme.Text,
 					AutoButtonColor = false,
-					ZIndex = 202,
+					ZIndex = 1003,
 					Parent = listFrame,
 				})
 				withUICorner(itemBtn, 10)
-				withUIStroke(itemBtn, theme.Stroke, 0.65, 1)
+				withUIStroke(itemBtn, window.Theme.Stroke, 0.65, 1)
 				window:_BindTheme(itemBtn, "BackgroundColor3", "Panel2")
 				window:_BindTheme(itemBtn, "TextColor3", "Text")
 				window:_BindTheme((itemBtn:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
@@ -1669,7 +1641,8 @@ function GroupMT:AddDropdown(text: string, items: {string}, default: string?, ca
 					btn.Text = it
 					if callback then task.spawn(callback, it) end
 					open = false
-					tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, 0)})
+					stopFollow()
+					tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(panel.Size.X.Scale, panel.Size.X.Offset, 0, 0)})
 					task.delay(0.14, function() if not open then panel.Visible = false end end)
 				end)
 			end
@@ -1684,11 +1657,13 @@ function GroupMT:AddDropdown(text: string, items: {string}, default: string?, ca
 		open = state
 		if open then
 			panel.Visible = true
+			startFollow()
 			rebuild(search.Text)
 			local targetH = math.min(PANEL_MAX, 52 + layout.AbsoluteContentSize.Y + 16)
-			tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, targetH)})
+			tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(panel.Size.X.Scale, panel.Size.X.Offset, 0, targetH)})
 		else
-			tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, 0)})
+			stopFollow()
+			tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(panel.Size.X.Scale, panel.Size.X.Offset, 0, 0)})
 			task.delay(0.14, function() if not open then panel.Visible = false end end)
 		end
 	end
@@ -1719,13 +1694,11 @@ function GroupMT:AddDropdown(text: string, items: {string}, default: string?, ca
 end
 
 function GroupMT:AddMultiDropdown(text: string, items: {string}, default: {string}?, callback: (({string}) -> ())?, flag: string?)
-	local theme: Theme = self._tab._window.Theme
 	local window: any = self._tab._window
+	local theme: Theme = window.Theme
 
 	local chosen: {[string]: boolean} = {}
-	if default then
-		for _, v in ipairs(default) do chosen[v] = true end
-	end
+	if default then for _, v in ipairs(default) do chosen[v] = true end end
 
 	local function currentList(): {string}
 		local out: {string} = {}
@@ -1738,7 +1711,7 @@ function GroupMT:AddMultiDropdown(text: string, items: {string}, default: {strin
 	local row = makeRow(44)
 	row.Parent = self._content
 
-	local title = mk("TextLabel", {
+	local titleLbl = mk("TextLabel", {
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, 18),
 		TextXAlignment = Enum.TextXAlignment.Left,
@@ -1748,7 +1721,7 @@ function GroupMT:AddMultiDropdown(text: string, items: {string}, default: {strin
 		TextColor3 = theme.SubText,
 		Parent = row,
 	})
-	window:_BindTheme(title, "TextColor3", "SubText")
+	window:_BindTheme(titleLbl, "TextColor3", "SubText")
 
 	local btn = mk("TextButton", {
 		BackgroundColor3 = theme.Panel2,
@@ -1780,7 +1753,7 @@ function GroupMT:AddMultiDropdown(text: string, items: {string}, default: {strin
 	end
 	refreshBtnText()
 
-	local panel, search, listFrame, layout = makeDropdownBase(window, theme, row)
+	local panel, search, listFrame, layout, startFollow, stopFollow = makeDropdownBase(window, btn)
 
 	local open = false
 	local PANEL_MAX = 240
@@ -1795,20 +1768,20 @@ function GroupMT:AddMultiDropdown(text: string, items: {string}, default: {strin
 				local itemRow = mk("Frame", {
 					BackgroundTransparency = 1,
 					Size = UDim2.new(1, 0, 0, 30),
-					ZIndex = 202,
+					ZIndex = 1003,
 					Parent = listFrame,
 				})
 
 				local box = mk("Frame", {
-					BackgroundColor3 = theme.Panel2,
+					BackgroundColor3 = window.Theme.Panel2,
 					BorderSizePixel = 0,
 					Size = UDim2.fromOffset(18, 18),
 					Position = UDim2.fromOffset(6, 6),
-					ZIndex = 203,
+					ZIndex = 1004,
 					Parent = itemRow,
 				})
 				withUICorner(box, 6)
-				withUIStroke(box, theme.Stroke, 0.55, 1)
+				withUIStroke(box, window.Theme.Stroke, 0.55, 1)
 				window:_BindTheme(box, "BackgroundColor3", "Panel2")
 				window:_BindTheme((box:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 
@@ -1818,8 +1791,8 @@ function GroupMT:AddMultiDropdown(text: string, items: {string}, default: {strin
 					Text = chosen[it] and "✓" or "",
 					TextSize = 14,
 					Font = Enum.Font.GothamBold,
-					TextColor3 = theme.Accent,
-					ZIndex = 204,
+					TextColor3 = window.Theme.Accent,
+					ZIndex = 1005,
 					Parent = box,
 				})
 				window:_BindTheme(check, "TextColor3", "Accent")
@@ -1832,9 +1805,9 @@ function GroupMT:AddMultiDropdown(text: string, items: {string}, default: {strin
 					TextXAlignment = Enum.TextXAlignment.Left,
 					TextSize = 13,
 					Font = Enum.Font.Gotham,
-					TextColor3 = theme.Text,
+					TextColor3 = window.Theme.Text,
 					AutoButtonColor = false,
-					ZIndex = 203,
+					ZIndex = 1004,
 					Parent = itemRow,
 				})
 				window:_BindTheme(label, "TextColor3", "Text")
@@ -1863,11 +1836,13 @@ function GroupMT:AddMultiDropdown(text: string, items: {string}, default: {strin
 		open = state
 		if open then
 			panel.Visible = true
+			startFollow()
 			rebuild(search.Text)
 			local targetH = math.min(PANEL_MAX, 52 + layout.AbsoluteContentSize.Y + 16)
-			tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, targetH)})
+			tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(panel.Size.X.Scale, panel.Size.X.Offset, 0, targetH)})
 		else
-			tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, 0)})
+			stopFollow()
+			tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(panel.Size.X.Scale, panel.Size.X.Offset, 0, 0)})
 			task.delay(0.14, function() if not open then panel.Visible = false end end)
 		end
 	end
@@ -1902,9 +1877,7 @@ function GroupMT:AddMultiDropdown(text: string, items: {string}, default: {strin
 	}
 end
 
---////////////////////////////////////////////////////////////
--- Color Picker (inline under row) + white + presets
---////////////////////////////////////////////////////////////
+-- ColorPicker (overlay popover) + white + presets
 local function hsvToColor(h: number, s: number, v: number): Color3
 	return Color3.fromHSV(h, s, v)
 end
@@ -1913,15 +1886,14 @@ local function colorToHSV(c: Color3): (number, number, number)
 end
 
 function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Color3) -> ())?, flag: string?)
-	local theme: Theme = self._tab._window.Theme
 	local window: any = self._tab._window
+	local theme: Theme = window.Theme
 
 	local current = default or theme.Accent
-	local h, s, v = colorToHSV(current)
+	local h, s, vv = colorToHSV(current)
 
 	local row = makeRow(44)
 	row.Parent = self._content
-	row.ClipsDescendants = false
 
 	local label = mk("TextLabel", {
 		BackgroundTransparency = 1,
@@ -1952,27 +1924,30 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 	local panel = mk("Frame", {
 		BackgroundColor3 = theme.Panel,
 		BorderSizePixel = 0,
-		Position = UDim2.new(0, 0, 1, 6),
-		Size = UDim2.new(1, 0, 0, 0),
+		Position = UDim2.fromOffset(0, 0),
+		Size = UDim2.new(0, 0, 0, 0),
 		ClipsDescendants = true,
-		ZIndex = 220,
+		ZIndex = 1200,
 		Visible = false,
-		Parent = row,
+		Parent = window._ui.overlay,
 	})
 	withUICorner(panel, 12)
 	withUIStroke(panel, theme.Stroke, 0.45, 1)
 	window:_BindTheme(panel, "BackgroundColor3", "Panel")
 	window:_BindTheme((panel:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 
+	local detach = function() end
+	local function startFollow() detach = attachToOverlay(window, swatchBtn, panel) end
+	local function stopFollow() detach() end
+
 	local PANEL_H = 140
 
-	-- SV square
 	local sv = mk("Frame", {
 		BackgroundColor3 = hsvToColor(h, 1, 1),
 		BorderSizePixel = 0,
 		Position = UDim2.fromOffset(10, 10),
 		Size = UDim2.new(1, -64, 0, 86),
-		ZIndex = 221,
+		ZIndex = 1201,
 		Parent = panel,
 	})
 	withUICorner(sv, 10)
@@ -1999,20 +1974,19 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 		BorderSizePixel = 0,
 		Size = UDim2.fromOffset(10, 10),
 		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.new(s, 0, 1 - v, 0),
-		ZIndex = 222,
+		Position = UDim2.new(s, 0, 1 - vv, 0),
+		ZIndex = 1202,
 		Parent = sv,
 	})
 	withUICorner(svCursor, 999)
 	withUIStroke(svCursor, Color3.new(0,0,0), 0.35, 1)
 
-	-- Hue bar
 	local hue = mk("Frame", {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		Position = UDim2.new(1, -44, 0, 10),
 		Size = UDim2.fromOffset(34, 86),
-		ZIndex = 221,
+		ZIndex = 1201,
 		Parent = panel,
 	})
 	withUICorner(hue, 10)
@@ -2038,21 +2012,20 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 0, 4),
 		Position = UDim2.new(0, 0, h, 0),
-		ZIndex = 222,
+		ZIndex = 1202,
 		Parent = hue,
 	})
 	withUICorner(hueCursor, 999)
 	withUIStroke(hueCursor, Color3.new(0,0,0), 0.35, 1)
 
-	-- presets strip (includes white)
 	local presets = mk("Frame", {
 		BackgroundTransparency = 1,
 		Position = UDim2.fromOffset(10, 104),
 		Size = UDim2.new(1, -20, 0, 26),
-		ZIndex = 221,
+		ZIndex = 1201,
 		Parent = panel,
 	})
-	local pl = mk("UIListLayout", {
+	mk("UIListLayout", {
 		FillDirection = Enum.FillDirection.Horizontal,
 		Padding = UDim.new(0, 6),
 		SortOrder = Enum.SortOrder.LayoutOrder,
@@ -2060,7 +2033,7 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 	})
 
 	local function applyColor(fire: boolean)
-		current = hsvToColor(h, s, v)
+		current = hsvToColor(h, s, vv)
 		swatchBtn.BackgroundColor3 = current
 		if callback and fire then task.spawn(callback, current) end
 	end
@@ -2072,30 +2045,29 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 			Size = UDim2.fromOffset(26, 26),
 			Text = "",
 			AutoButtonColor = false,
-			ZIndex = 222,
+			ZIndex = 1202,
 			Parent = presets,
 		})
 		withUICorner(b, 8)
 		withUIStroke(b, theme.Stroke, 0.35, 1)
 		window:_BindTheme((b:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 		b.MouseButton1Click:Connect(function()
-			h, s, v = colorToHSV(c)
+			h, s, vv = colorToHSV(c)
 			sv.BackgroundColor3 = hsvToColor(h, 1, 1)
 			svGrad.Color = ColorSequence.new(Color3.new(1,1,1), hsvToColor(h, 1, 1))
-			svCursor.Position = UDim2.new(s, 0, 1 - v, 0)
+			svCursor.Position = UDim2.new(s, 0, 1 - vv, 0)
 			hueCursor.Position = UDim2.new(0, 0, h, 0)
 			applyColor(true)
 		end)
 	end
 
-	presetBtn(Color3.new(1,1,1))            -- ✅ white
+	presetBtn(Color3.new(1,1,1)) -- white
 	presetBtn(Color3.new(0,0,0))
 	presetBtn(theme.Accent)
 	presetBtn(Color3.fromRGB(255, 90, 90))
 	presetBtn(Color3.fromRGB(90, 255, 170))
 	presetBtn(Color3.fromRGB(90, 180, 255))
 
-	-- input handlers
 	local draggingSV = false
 	sv.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -2124,8 +2096,8 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 		local p = sv.AbsolutePosition
 		local sz = sv.AbsoluteSize
 		s = clamp01((px - p.X) / sz.X)
-		v = 1 - clamp01((py - p.Y) / sz.Y)
-		svCursor.Position = UDim2.new(s, 0, 1 - v, 0)
+		vv = 1 - clamp01((py - p.Y) / sz.Y)
+		svCursor.Position = UDim2.new(s, 0, 1 - vv, 0)
 		applyColor(true)
 	end
 
@@ -2151,9 +2123,11 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 		open = state
 		if open then
 			panel.Visible = true
-			tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, PANEL_H)})
+			startFollow()
+			tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(panel.Size.X.Scale, panel.Size.X.Offset, 0, PANEL_H)})
 		else
-			tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, 0)})
+			stopFollow()
+			tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(panel.Size.X.Scale, panel.Size.X.Offset, 0, 0)})
 			task.delay(0.14, function() if not open then panel.Visible = false end end)
 		end
 	end
@@ -2166,7 +2140,7 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 		window:RegisterFlag(flag, function() return current end, function(v)
 			if typeof(v) == "Color3" then
 				current = v
-				h, s, v = colorToHSV(current)
+				h, s, vv = colorToHSV(current)
 				applyColor(false)
 			end
 		end)
@@ -2176,7 +2150,7 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 		Get = function() return current end,
 		Set = function(c: Color3)
 			current = c
-			h, s, v = colorToHSV(current)
+			h, s, vv = colorToHSV(current)
 			applyColor(true)
 		end
 	}
