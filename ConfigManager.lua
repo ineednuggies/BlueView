@@ -1,134 +1,103 @@
 --!strict
--- ConfigManager.lua (UPDATED)
--- Saves/loads config values using executor filesystem APIs.
+-- ConfigManager.lua
 
 local HttpService = game:GetService("HttpService")
 
 local ConfigManager = {}
 ConfigManager.__index = ConfigManager
 
-local function hasFS()
-	return (type(writefile) == "function")
-		and (type(readfile) == "function")
-		and (type(isfile) == "function")
+ConfigManager._window = nil
+ConfigManager._store = {} :: {[string]: string} -- in-memory JSON configs
+
+local function canFS(): boolean
+	return typeof(writefile) == "function" and typeof(readfile) == "function" and typeof(isfile) == "function"
 end
 
-local function ensureFolder(path: string)
-	if type(isfolder) == "function" and type(makefolder) == "function" then
-		if not isfolder(path) then
-			makefolder(path)
+local FOLDER = "BlueViewConfigs"
+
+local function ensureFolder()
+	if typeof(makefolder) == "function" then
+		if typeof(isfolder) == "function" then
+			if not isfolder(FOLDER) then makefolder(FOLDER) end
+		else
+			pcall(function() makefolder(FOLDER) end)
 		end
 	end
 end
 
-local function safeEncode(t: any): string
-	return HttpService:JSONEncode(t)
+function ConfigManager:SetLibrary(window: any)
+	self._window = window
 end
 
-local function safeDecode(s: string): any
-	return HttpService:JSONDecode(s)
+function ConfigManager:Collect(): {[string]: any}
+	if not self._window then return {} end
+	return self._window:CollectConfig()
 end
 
-function ConfigManager.new(rootFolder: string)
-	local self = setmetatable({}, ConfigManager)
-	self.RootFolder = rootFolder
-	return self
+function ConfigManager:Apply(data: {[string]: any})
+	if not self._window then return end
+	self._window:ApplyConfig(data)
 end
 
-function ConfigManager:GetFolder(): string
-	return self.RootFolder
-end
+function ConfigManager:Save(name: string)
+	if not self._window then return end
+	local data = self._window:CollectConfig()
+	local json = HttpService:JSONEncode(data)
 
-function ConfigManager:Save(window: any, name: string): (boolean, string)
-	if not hasFS() then return false, "Filesystem not available in this environment." end
-	if name == "" then return false, "Config name is empty." end
+	-- Always keep in-memory
+	self._store[name] = json
 
-	ensureFolder(self.RootFolder)
-	local path = self.RootFolder .. "/" .. name .. ".json"
-
-	local data = window:CollectConfig()
-	local ok, err = pcall(function()
-		writefile(path, safeEncode(data))
-	end)
-	if not ok then
-		return false, tostring(err)
+	-- Optional filesystem
+	if canFS() then
+		ensureFolder()
+		local path = FOLDER .. "/" .. name .. ".json"
+		pcall(function() writefile(path, json) end)
 	end
-	return true, "Saved: " .. name
 end
 
-function ConfigManager:Load(window: any, name: string): (boolean, string)
-	if not hasFS() then return false, "Filesystem not available in this environment." end
-	local path = self.RootFolder .. "/" .. name .. ".json"
-	if type(isfile) == "function" and not isfile(path) then
-		return false, "Config not found: " .. name
-	end
+function ConfigManager:Load(name: string)
+	if not self._window then return end
 
-	local ok, err = pcall(function()
-		local raw = readfile(path)
-		local data = safeDecode(raw)
-		if typeof(data) == "table" then
-			window:ApplyConfig(data)
+	local json: string? = self._store[name]
+
+	if not json and canFS() then
+		local path = FOLDER .. "/" .. name .. ".json"
+		if isfile(path) then
+			local ok, content = pcall(function() return readfile(path) end)
+			if ok and type(content) == "string" then
+				json = content
+				self._store[name] = content
+			end
 		end
-	end)
-	if not ok then
-		return false, tostring(err)
 	end
-	return true, "Loaded: " .. name
-end
 
-function ConfigManager:Delete(name: string): (boolean, string)
-	if not hasFS() then return false, "Filesystem not available in this environment." end
-	if type(delfile) ~= "function" then return false, "Delete not supported." end
-
-	local path = self.RootFolder .. "/" .. name .. ".json"
-	local ok, err = pcall(function()
-		if type(isfile) == "function" and isfile(path) then
-			delfile(path)
-		end
-	end)
-	if not ok then
-		return false, tostring(err)
+	if not json then return end
+	local ok, decoded = pcall(function() return HttpService:JSONDecode(json :: string) end)
+	if ok and typeof(decoded) == "table" then
+		self._window:ApplyConfig(decoded :: {[string]: any})
 	end
-	return true, "Deleted: " .. name
-end
-
-function ConfigManager:Rename(oldName: string, newName: string): (boolean, string)
-	if not hasFS() then return false, "Filesystem not available in this environment." end
-	if type(delfile) ~= "function" then return false, "Rename not supported." end
-
-	local oldPath = self.RootFolder .. "/" .. oldName .. ".json"
-	local newPath = self.RootFolder .. "/" .. newName .. ".json"
-
-	local ok, err = pcall(function()
-		local raw = readfile(oldPath)
-		writefile(newPath, raw)
-		delfile(oldPath)
-	end)
-	if not ok then
-		return false, tostring(err)
-	end
-	return true, "Renamed: " .. oldName .. " -> " .. newName
 end
 
 function ConfigManager:List(): {string}
-	local out: {string} = {}
-	if not hasFS() then return out end
-	if type(listfiles) ~= "function" then return out end
-	ensureFolder(self.RootFolder)
+	local out = {}
+	for k in pairs(self._store) do table.insert(out, k) end
 
-	local ok, files = pcall(function()
-		return listfiles(self.RootFolder)
-	end)
-	if not ok or typeof(files) ~= "table" then return out end
-
-	for _, p in ipairs(files :: {any}) do
-		local s = tostring(p)
-		local name = string.match(s, "([^/\\]+)%.json$")
-		if name then table.insert(out, name) end
+	-- Optional filesystem discovery
+	if canFS() and typeof(listfiles) == "function" then
+		ensureFolder()
+		local ok, files = pcall(function() return listfiles(FOLDER) end)
+		if ok and typeof(files) == "table" then
+			for _, f in ipairs(files) do
+				local n = tostring(f):match("([^/\\]+)%.json$")
+				if n and not self._store[n] then
+					table.insert(out, n)
+				end
+			end
+		end
 	end
+
 	table.sort(out)
 	return out
 end
 
 return ConfigManager
-
