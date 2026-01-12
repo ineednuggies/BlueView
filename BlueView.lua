@@ -643,6 +643,52 @@ function UILib.new(options: WindowOptions): Window
 		searchIcon = searchIcon,
 	}
 
+	--////////////////////////////////////////////////////////////
+-- Selected bar updater (handles categories + initial layout)
+--////////////////////////////////////////////////////////////
+		self._barToken = 0
+		
+		function self:_UpdateSelectedBar(instant: boolean?)
+			local tab = self.SelectedTab
+			if not tab then return end
+		
+			local sb: Frame = self._ui.selectedBar
+			local ref: Frame = self._ui.tabList -- IMPORTANT: reference frame for positioning
+			if not sb or not ref then return end
+			if not tab._btn or not tab._btn.Parent then return end
+		
+			local barH = sb.AbsoluteSize.Y
+			if barH <= 0 then barH = 34 end
+		
+			local btnAbsY = tab._btn.AbsolutePosition.Y
+			local refAbsY = ref.AbsolutePosition.Y
+			local btnH = tab._btn.AbsoluteSize.Y
+		
+			local y = (btnAbsY - refAbsY) + math.floor((btnH - barH) / 2)
+		
+			if instant then
+				sb.Position = UDim2.new(0, -6, 0, y)
+			else
+				tween(sb, TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+					Position = UDim2.new(0, -6, 0, y),
+				})
+			end
+		end
+		
+		function self:_UpdateSelectedBarDeferred(instant: boolean?)
+			self._barToken += 1
+			local token = self._barToken
+		
+			task.spawn(function()
+				-- wait for UIListLayout to settle (fixes "first tab slightly above")
+				RunService.RenderStepped:Wait()
+				RunService.RenderStepped:Wait()
+				if token ~= self._barToken then return end
+				self:_UpdateSelectedBar(instant)
+			end)
+		end
+
+
 	function self:_BindTheme(inst: Instance, prop: string, key: string)
 		table.insert(self._themeBindings, {inst = inst, prop = prop, key = key})
 	end
@@ -858,6 +904,7 @@ function WindowMT:AddCategory(name: string)
 		ZIndex = 7,
 		Parent = self._ui.tabButtons,
 	})
+	self:_UpdateSelectedBarDeferred(true)
 end
 
 local function makeSidebarTab(theme: Theme, iconProvider: IconProvider?, name: string, icon: string?)
@@ -938,6 +985,10 @@ function WindowMT:AddTab(name: string, icon: string?, category: string?)
 	})
 	mk("UIPadding", {PaddingTop=UDim.new(0,10),PaddingBottom=UDim.new(0,10),PaddingLeft=UDim.new(0,10),PaddingRight=UDim.new(0,10),Parent=colLeft})
 	mk("UIListLayout", {SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,10),Parent=colLeft})
+		tabLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+			self:_UpdateSelectedBarDeferred(true)
+		end)
+
 
 	local colRight = mk("ScrollingFrame", {
 		Name = "Right",
@@ -995,7 +1046,9 @@ function WindowMT:AddTab(name: string, icon: string?, category: string?)
 	if not self.SelectedTab then
 		task.defer(function()
 			self:SelectTab(name, true)
+			self:_UpdateSelectedBarDeferred(true)
 		end)
+	
 	end
 
 	return tab
@@ -1016,6 +1069,7 @@ function WindowMT:SelectTab(name: string, instant: boolean?)
 			tween(t._btnLabel, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextColor3 = self.Theme.Muted})
 			if t._btnIcon then t._btnIcon.ImageTransparency = 0.45 end
 		end
+			self:_UpdateSelectedBarDeferred(instant == true)
 	end
 
 	tab._page.Visible = true
