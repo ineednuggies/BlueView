@@ -1,103 +1,71 @@
 --!strict
--- ConfigManager.lua
+-- ConfigManager.lua - save/load BlueView flags
+-- Uses writefile/readfile if present (executors), otherwise in-memory fallback.
 
 local HttpService = game:GetService("HttpService")
 
 local ConfigManager = {}
 ConfigManager.__index = ConfigManager
 
-ConfigManager._window = nil
-ConfigManager._store = {} :: {[string]: string} -- in-memory JSON configs
+local folder = "BlueViewConfigs"
+local libraryWindow: any = nil
+local memoryStore: {[string]: string} = {}
 
-local function canFS(): boolean
-	return typeof(writefile) == "function" and typeof(readfile) == "function" and typeof(isfile) == "function"
+function ConfigManager.SetFolder(name: string)
+	folder = name
 end
 
-local FOLDER = "BlueViewConfigs"
+function ConfigManager.SetLibrary(window: any)
+	libraryWindow = window
+end
+
+local function canFile()
+	return (typeof(writefile) == "function") and (typeof(readfile) == "function") and (typeof(isfile) == "function") and (typeof(makefolder) == "function")
+end
 
 local function ensureFolder()
-	if typeof(makefolder) == "function" then
-		if typeof(isfolder) == "function" then
-			if not isfolder(FOLDER) then makefolder(FOLDER) end
-		else
-			pcall(function() makefolder(FOLDER) end)
-		end
+	if not canFile() then return end
+	if not isfolder(folder) then
+		makefolder(folder)
 	end
 end
 
-function ConfigManager:SetLibrary(window: any)
-	self._window = window
-end
-
-function ConfigManager:Collect(): {[string]: any}
-	if not self._window then return {} end
-	return self._window:CollectConfig()
-end
-
-function ConfigManager:Apply(data: {[string]: any})
-	if not self._window then return end
-	self._window:ApplyConfig(data)
-end
-
-function ConfigManager:Save(name: string)
-	if not self._window then return end
-	local data = self._window:CollectConfig()
+function ConfigManager.Save(name: string)
+	if not libraryWindow or not libraryWindow.CollectConfig then return false end
+	local data = libraryWindow:CollectConfig()
 	local json = HttpService:JSONEncode(data)
 
-	-- Always keep in-memory
-	self._store[name] = json
-
-	-- Optional filesystem
-	if canFS() then
+	if canFile() then
 		ensureFolder()
-		local path = FOLDER .. "/" .. name .. ".json"
-		pcall(function() writefile(path, json) end)
+		writefile(folder .. "/" .. name .. ".json", json)
+	else
+		memoryStore[name] = json
 	end
+	return true
 end
 
-function ConfigManager:Load(name: string)
-	if not self._window then return end
+function ConfigManager.Load(name: string)
+	if not libraryWindow or not libraryWindow.ApplyConfig then return false end
+	local json: string? = nil
 
-	local json: string? = self._store[name]
-
-	if not json and canFS() then
-		local path = FOLDER .. "/" .. name .. ".json"
+	if canFile() then
+		ensureFolder()
+		local path = folder .. "/" .. name .. ".json"
 		if isfile(path) then
-			local ok, content = pcall(function() return readfile(path) end)
-			if ok and type(content) == "string" then
-				json = content
-				self._store[name] = content
-			end
+			json = readfile(path)
 		end
+	else
+		json = memoryStore[name]
 	end
 
-	if not json then return end
-	local ok, decoded = pcall(function() return HttpService:JSONDecode(json :: string) end)
-	if ok and typeof(decoded) == "table" then
-		self._window:ApplyConfig(decoded :: {[string]: any})
-	end
-end
+	if not json then return false end
+	local ok, decoded = pcall(function()
+		return HttpService:JSONDecode(json :: string)
+	end)
+	if not ok then return false end
 
-function ConfigManager:List(): {string}
-	local out = {}
-	for k in pairs(self._store) do table.insert(out, k) end
-
-	-- Optional filesystem discovery
-	if canFS() and typeof(listfiles) == "function" then
-		ensureFolder()
-		local ok, files = pcall(function() return listfiles(FOLDER) end)
-		if ok and typeof(files) == "table" then
-			for _, f in ipairs(files) do
-				local n = tostring(f):match("([^/\\]+)%.json$")
-				if n and not self._store[n] then
-					table.insert(out, n)
-				end
-			end
-		end
-	end
-
-	table.sort(out)
-	return out
+	libraryWindow:ApplyConfig(decoded)
+	return true
 end
 
 return ConfigManager
