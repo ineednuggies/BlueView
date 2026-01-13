@@ -1,5 +1,5 @@
 --!strict
--- ThemeManager.lua
+-- ThemeManager.lua - simple theme presets + apply to BlueView window
 
 local ThemeManager = {}
 ThemeManager.__index = ThemeManager
@@ -16,20 +16,8 @@ export type Theme = {
 	Muted: Color3,
 }
 
-local function deepCopy(t: any): any
-	local out = {}
-	for k, v in pairs(t) do
-		if typeof(v) == "table" then
-			out[k] = deepCopy(v)
-		else
-			out[k] = v
-		end
-	end
-	return out
-end
-
-local PRESETS: {[string]: Theme} = {
-	["Purple Glass"] = {
+local themes: {[string]: Theme} = {
+	Purple = {
 		Accent = Color3.fromRGB(154, 108, 255),
 		BG     = Color3.fromRGB(10, 9, 16),
 		BG2    = Color3.fromRGB(16, 13, 26),
@@ -40,76 +28,49 @@ local PRESETS: {[string]: Theme} = {
 		SubText= Color3.fromRGB(170, 175, 200),
 		Muted  = Color3.fromRGB(115, 120, 150),
 	},
-	["Deep Space"] = {
+	Midnight = {
 		Accent = Color3.fromRGB(90, 180, 255),
-		BG     = Color3.fromRGB(6, 8, 14),
-		BG2    = Color3.fromRGB(10, 12, 22),
-		Panel  = Color3.fromRGB(14, 16, 28),
-		Panel2 = Color3.fromRGB(10, 12, 22),
-		Stroke = Color3.fromRGB(30, 40, 70),
-		Text   = Color3.fromRGB(236, 242, 255),
-		SubText= Color3.fromRGB(160, 175, 205),
-		Muted  = Color3.fromRGB(110, 125, 155),
+		BG     = Color3.fromRGB(7, 9, 14),
+		BG2    = Color3.fromRGB(10, 12, 20),
+		Panel  = Color3.fromRGB(13, 16, 26),
+		Panel2 = Color3.fromRGB(10, 12, 20),
+		Stroke = Color3.fromRGB(32, 45, 70),
+		Text   = Color3.fromRGB(235, 245, 255),
+		SubText= Color3.fromRGB(170, 185, 205),
+		Muted  = Color3.fromRGB(110, 125, 150),
 	},
-	["Rose Night"] = {
-		Accent = Color3.fromRGB(255, 110, 170),
-		BG     = Color3.fromRGB(14, 8, 12),
-		BG2    = Color3.fromRGB(22, 12, 18),
-		Panel  = Color3.fromRGB(26, 14, 22),
-		Panel2 = Color3.fromRGB(18, 10, 16),
-		Stroke = Color3.fromRGB(70, 35, 55),
-		Text   = Color3.fromRGB(250, 240, 248),
-		SubText= Color3.fromRGB(210, 170, 195),
-		Muted  = Color3.fromRGB(150, 115, 140),
-	},
-	["Mono"] = {
-		Accent = Color3.fromRGB(255, 255, 255),
-		BG     = Color3.fromRGB(10, 10, 10),
-		BG2    = Color3.fromRGB(14, 14, 14),
-		Panel  = Color3.fromRGB(18, 18, 18),
-		Panel2 = Color3.fromRGB(14, 14, 14),
-		Stroke = Color3.fromRGB(55, 55, 55),
-		Text   = Color3.fromRGB(245, 245, 245),
-		SubText= Color3.fromRGB(180, 180, 180),
-		Muted  = Color3.fromRGB(120, 120, 120),
+	Crimson = {
+		Accent = Color3.fromRGB(255, 90, 90),
+		BG     = Color3.fromRGB(14, 8, 10),
+		BG2    = Color3.fromRGB(20, 10, 14),
+		Panel  = Color3.fromRGB(24, 12, 16),
+		Panel2 = Color3.fromRGB(18, 10, 13),
+		Stroke = Color3.fromRGB(75, 36, 45),
+		Text   = Color3.fromRGB(245, 235, 240),
+		SubText= Color3.fromRGB(205, 170, 182),
+		Muted  = Color3.fromRGB(155, 120, 130),
 	},
 }
 
-ThemeManager._themes = deepCopy(PRESETS)
-ThemeManager._window = nil
-ThemeManager._current = "Purple Glass"
-
-function ThemeManager:SetLibrary(window: any)
-	self._window = window
+function ThemeManager.GetThemes()
+	return themes
 end
 
-function ThemeManager:GetThemeNames(): {string}
-	local names = {}
-	for k in pairs(self._themes) do table.insert(names, k) end
-	table.sort(names)
-	return names
+function ThemeManager.AddTheme(name: string, theme: Theme)
+	themes[name] = theme
 end
 
-function ThemeManager:AddTheme(name: string, theme: Theme)
-	self._themes[name] = deepCopy(theme)
-end
-
-function ThemeManager:GetTheme(name: string): Theme?
-	local t = self._themes[name]
-	if not t then return nil end
-	return deepCopy(t)
-end
-
-function ThemeManager:ApplyTheme(name: string)
-	if not self._window then return end
-	local theme = self._themes[name]
-	if not theme then return end
-	self._current = name
-	self._window:SetTheme(deepCopy(theme))
-end
-
-function ThemeManager:GetCurrentThemeName(): string
-	return self._current
+function ThemeManager.Apply(window: any, nameOrTheme: any)
+	if typeof(nameOrTheme) == "string" then
+		local t = themes[nameOrTheme]
+		if t and window and window.SetTheme then
+			window:SetTheme(t)
+		end
+	elseif typeof(nameOrTheme) == "table" then
+		if window and window.SetTheme then
+			window:SetTheme(nameOrTheme)
+		end
+	end
 end
 
 return ThemeManager
