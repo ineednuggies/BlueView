@@ -2119,16 +2119,18 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 	window:_BindTheme((wheel:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 
 
-	if WHEEL_IMG ~= "" then
-		mk("ImageLabel", {
-			BackgroundTransparency = 1,
-			Size = UDim2.fromScale(1, 1),
-			Image = WHEEL_IMG,
-			ScaleType = Enum.ScaleType.Fit,
-			ZIndex = 221,
-			Parent = wheel,
-		})
-	end
+		if WHEEL_IMG ~= "" and WHEEL_IMG ~= "rbxassetid://0" then
+		    mk("ImageLabel", {
+		        BackgroundTransparency = 1,
+		        Size = UDim2.fromScale(1, 1),
+		        Image = WHEEL_IMG,
+		        ImageTransparency = 0,          -- (force visible)
+		        ScaleType = Enum.ScaleType.Fit,
+		        ZIndex = 222,                   -- (put it above the wheel frame)
+		        Parent = wheel,
+		    })
+		end
+
 
 	-- wheel cursor
 	local wheelCursor = mk("Frame", {
