@@ -1929,7 +1929,7 @@ end
 --////////////////////////////////////////////////////////////
 -- Color Picker (wheel image + brightness bar)
 --////////////////////////////////////////////////////////////
-local WHEEL_IMG = "rbxassetid://0" -- <-- set your wheel asset id here (must be a color wheel texture)
+local WHEEL_IMG = "rbxassetid://1003599924" -- <-- set your wheel asset id here (must be a color wheel texture)
 local function hsvToColor(h: number, s: number, v: number): Color3 return Color3.fromHSV(h, s, v) end
 local function colorToHSV(c: Color3): (number, number, number) return c:ToHSV() end
 
