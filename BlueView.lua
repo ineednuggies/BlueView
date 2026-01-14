@@ -219,7 +219,19 @@ function UILib.new(options: WindowOptions): Window
 		Parent = parent,
 	})
 
-	local root = mk("Frame", {
+	
+	-- Popup layer (dropdowns/color pickers). Parent to ScreenGui to avoid clipping by scrolling frames.
+	local popupLayer = mk("Frame", {
+		Name = "PopupLayer",
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+		ZIndex = 900,
+		ClipsDescendants = false,
+		Parent = gui,
+	})
+
+local root = mk("Frame", {
 		Name = "Root",
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5),
@@ -554,6 +566,7 @@ function UILib.new(options: WindowOptions): Window
 	self._minToken = 0
 
 	self._themeBindings = {} :: {ThemeBinding}
+	self._themeWatchers = {} :: { (Theme) -> () }
 	self._flags = {} :: {[string]: {get: () -> any, set: (any) -> ()}}
 	self._categories = {} :: {[string]: boolean}
 
@@ -562,6 +575,7 @@ function UILib.new(options: WindowOptions): Window
 
 	self._ui = {
 		gui = gui,
+		popupLayer = popupLayer,
 		root = root,
 		topbar = topbar,
 		contentWrap = contentWrap,
@@ -627,12 +641,16 @@ function UILib.new(options: WindowOptions): Window
 		end
 		self._activePopup = popup
 		self._activePopupClose = closer
+		self._activePopupOpenedAt = os.clock()
 	end
 
 	-- close popup on outside click
 	table.insert(self._connections, UserInputService.InputBegan:Connect(function(input, gp)
 		if gp then return end
 		if not self._activePopup then return end
+	if self._activePopupOpenedAt and (os.clock() - self._activePopupOpenedAt) < 0.12 then
+		return
+	end
 		if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
 			return
 		end
@@ -825,6 +843,9 @@ end
 
 function WindowMT:SetTheme(newTheme: Theme)
 	self:_ApplyTheme(newTheme)
+	for _, fn in ipairs(self._themeWatchers) do
+		pcall(function() fn(self.Theme) end)
+	end
 	-- refresh tab colors instantly
 	for _, tab in ipairs(self._tabOrder) do
 		if self.SelectedTab == tab then
@@ -838,6 +859,10 @@ function WindowMT:SetTheme(newTheme: Theme)
 end
 function WindowMT:GetTheme(): Theme
 	return self.Theme
+end
+
+function WindowMT:OnThemeChanged(fn: (Theme) -> ())
+	table.insert(self._themeWatchers, fn)
 end
 
 function WindowMT:RegisterFlag(flag: string, getter: () -> any, setter: (any) -> ())
@@ -1325,7 +1350,7 @@ local function addRadialGlowSimple(host: GuiObject, color: Color3, pad: number, 
 	end)
 
 	sync()
-	return setIntensity
+	return setIntensity, setColor
 end
 
 function GroupMT:AddToggle(text: string, default: boolean?, callback: ((boolean) -> ())?, flag: string?)
@@ -1366,9 +1391,8 @@ function GroupMT:AddToggle(text: string, default: boolean?, callback: ((boolean)
 		Parent = btn,
 	})
 	withUICorner(track, 999)
-	window:_BindTheme(track, "BackgroundColor3", "Stroke")
 
-	local setGlow = addRadialGlowSimple(track, theme.Accent, 14, 0.86)
+	local setGlow, setGlowColor = addRadialGlowSimple(track, theme.Accent, 14, 0.86)
 	setGlow(on and 1 or 0)
 
 	local knob = mk("Frame", {
@@ -1394,6 +1418,21 @@ function GroupMT:AddToggle(text: string, default: boolean?, callback: ((boolean)
 	end
 
 	btn.MouseButton1Click:Connect(function() set(not on, true) end)
+
+	-- keep toggle visuals correct when theme/accent changes
+	window:OnThemeChanged(function(newTheme)
+		theme = newTheme
+		knob.BackgroundColor3 = theme.Text
+		if on then
+			track.BackgroundColor3 = theme.Accent
+			setGlow(1)
+		else
+			track.BackgroundColor3 = theme.Stroke
+			setGlow(0)
+		end
+		if setGlowColor then setGlowColor(theme.Accent) end
+	end)
+
 
 	if flag and flag ~= "" then
 		window:RegisterFlag(flag, function() return on end, function(v)
@@ -1578,12 +1617,12 @@ local function makeDropdownBase(window: any, theme: Theme, row: Frame, anchorBtn
 	local panel = mk("Frame", {
 		BackgroundColor3 = theme.Panel,
 		BorderSizePixel = 0,
-		Position = UDim2.new(0, anchorBtn.Position.X.Offset, 1, 6),
-		Size = UDim2.new(0, anchorBtn.AbsoluteSize.X, 0, 0),
+		Position = UDim2.fromOffset(0, 0),
+		Size = UDim2.fromOffset(0, 0),
 		ClipsDescendants = true,
 		ZIndex = 200,
 		Visible = false,
-		Parent = row,
+		Parent = window._ui.popupLayer,
 	})
 	withUICorner(panel, 10)
 	withUIStroke(panel, theme.Stroke, 0.45, 1)
@@ -1728,10 +1767,10 @@ function GroupMT:AddDropdown(text: string, items: {string}, default: string?, ca
 		rebuild(search.Text)
 		-- re-center under button in case of autoscale
 		panel.Position = UDim2.new(0, btn.Position.X.Offset, 1, 6)
-		panel.Size = UDim2.new(0, btn.AbsoluteSize.X, 0, 0)
+		panel.Size = UDim2.fromOffset(btn.AbsoluteSize.X, 0)
 
 		local targetH = math.min(PANEL_MAX, 52 + layout.AbsoluteContentSize.Y + 16)
-		tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(0, btn.AbsoluteSize.X, 0, targetH)})
+		tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.fromOffset(btn.AbsoluteSize.X, targetH)})
 		window:_SetActivePopup(panel, closeNow)
 		open = true
 	end
@@ -1828,7 +1867,7 @@ function GroupMT:AddMultiDropdown(text: string, items: {string}, default: {strin
 
 	local function closeNow()
 		open = false
-		tween(panel, TweenInfo.new(0.14, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(0, btn.AbsoluteSize.X, 0, 0)})
+		tween(panel, TweenInfo.new(0.14, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.fromOffset(btn.AbsoluteSize.X, 0)})
 		task.delay(0.12, function()
 			if not open then panel.Visible = false end
 		end)
@@ -1912,9 +1951,9 @@ function GroupMT:AddMultiDropdown(text: string, items: {string}, default: {strin
 		panel.Visible = true
 		rebuild(search.Text)
 		panel.Position = UDim2.new(0, btn.Position.X.Offset, 1, 6)
-		panel.Size = UDim2.new(0, btn.AbsoluteSize.X, 0, 0)
+		panel.Size = UDim2.fromOffset(btn.AbsoluteSize.X, 0)
 		local targetH = math.min(PANEL_MAX, 52 + layout.AbsoluteContentSize.Y + 16)
-		tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(0, btn.AbsoluteSize.X, 0, targetH)})
+		tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.fromOffset(btn.AbsoluteSize.X, targetH)})
 		window:_SetActivePopup(panel, closeNow)
 		open = true
 	end
@@ -1951,7 +1990,7 @@ end
 --////////////////////////////////////////////////////////////
 -- NOTE: This uses math-based wheel picking (no texture required).
 -- If you want a pretty wheel image, set WHEEL_IMG to an uploaded wheel PNG and it will render behind the picker.
-local WHEEL_IMG = "1003599924" -- e.g. "rbxassetid://<your_color_wheel_png>"
+local WHEEL_IMG = "rbxasset://textures/ui/ColorWheel.png" -- e.g. "rbxassetid://<your_color_wheel_png>"
 
 local function hsvToColor(h: number, s: number, v: number): Color3
 	return Color3.fromHSV(h, s, v)
@@ -2000,12 +2039,12 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 	local panel = mk("Frame", {
 		BackgroundColor3 = theme.Panel,
 		BorderSizePixel = 0,
-		Position = UDim2.new(0, 3, 1, 6),
-		Size = UDim2.new(1, -6, 0, 0),
+		Position = UDim2.fromOffset(0, 0),
+		Size = UDim2.fromOffset(268, 0),
 		ClipsDescendants = true,
 		ZIndex = 220,
 		Visible = false,
-		Parent = row,
+		Parent = window._ui.popupLayer,
 	})
 	withUICorner(panel, 12)
 	withUIStroke(panel, theme.Stroke, 0.45, 1)
@@ -2213,15 +2252,16 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 	local open = false
 	local function closeNow()
 		open = false
-		tween(panel, TweenInfo.new(0.14, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(1, -6, 0, 0)})
+		tween(panel, TweenInfo.new(0.14, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.fromOffset(268, 0)})
 		task.delay(0.12, function()
 			if not open then panel.Visible = false end
 		end)
 	end
 	local function openNow()
 		panel.Visible = true
-		panel.Size = UDim2.new(1, -6, 0, 0)
-		tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(1, -6, 0, PANEL_H)})
+		window:_PositionPopupUnder(swatchBtn, panel, 6)
+		panel.Size = UDim2.fromOffset(268, 0)
+		tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.fromOffset(268, PANEL_H)})
 		window:_SetActivePopup(panel, closeNow)
 		open = true
 	end
