@@ -2104,10 +2104,9 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 
 	local PANEL_H = 178
 
-	-- wheel area
-	local wheel = mk("ImageLabel", {
+
+	local wheel = mk("Frame", {
 		BackgroundTransparency = 1,
-		Image = WHEEL_IMG,
 		BackgroundColor3 = Color3.fromRGB(25, 23, 40),
 		BorderSizePixel = 0,
 		Position = UDim2.fromOffset(10, 10),
@@ -2119,7 +2118,7 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 	withUIStroke(wheel, theme.Stroke, 0.65, 1)
 	window:_BindTheme((wheel:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 
-	-- optional wheel image
+
 	if WHEEL_IMG ~= "" then
 		mk("ImageLabel", {
 			BackgroundTransparency = 1,
@@ -2128,6 +2127,7 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 			ScaleType = Enum.ScaleType.Fit,
 			ZIndex = 221,
 			Parent = wheel,
+			Position = UDim2.fromOffset(0, 0),
 		})
 	end
 
