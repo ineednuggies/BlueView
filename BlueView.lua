@@ -1,17 +1,3 @@
---!strict
--- BlueView.lua (SpareStackUI) - Full updated package build
--- Features:
--- ✅ Autoscaling + mobile support
--- ✅ Sidebar categories + tabs w/ optional icons
--- ✅ Inactive tabs grey, active bright
--- ✅ Selected tab bar correct on first layout + switches
--- ✅ Dragging doesn't snap back to center
--- ✅ Main search starts empty (placeholder only)
--- ✅ Dropdown + MultiDropdown: inline under control, searchable, checkbox multi-select
--- ✅ ColorPicker: color wheel (HSV) + presets (incl. white)
--- ✅ Popup manager: only ONE popup open at a time; switching tabs closes popups
--- ✅ Theme binding hooks: ThemeManager can live-update all bound UI
--- ✅ Config flags: ConfigManager can save/load toggles, sliders, dropdowns, multi dropdowns, colors
 
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -265,6 +251,10 @@ local root = mk("Frame", {
 	local uiScale = mk("UIScale", {Scale = 1, Parent = root})
 	local minScale = options.MinScale or 0.68
 	local maxScale = options.MaxScale or 1.0
+		uiScale:GetPropertyChangedSignal("Scale"):Connect(function()
+			self:_UpdateSelectedBarDeferred(true)
+		end)
+
 
 	local function updateScale()
 		if not autoScale then uiScale.Scale = 1; return end
@@ -454,7 +444,7 @@ local root = mk("Frame", {
 		Size = UDim2.new(0, 3, 0, 34),
 		Position = UDim2.new(0, -6, 0, 0),
 		ZIndex = 50,
-		Parent = tabList,
+		Parent = tabButtons,
 	})
 	withUICorner(selectedBar, 999)
 
@@ -709,22 +699,20 @@ end
 	--////////////////////////////////////////////////////////////
 	-- Selected bar updater
 	--////////////////////////////////////////////////////////////
-	function self:_UpdateSelectedBar(instant: boolean?)
+		function self:_UpdateSelectedBar(instant: boolean?)
 		local tab = self.SelectedTab
 		if not tab or not tab._btn or not tab._btn.Parent then return end
+	
 		local sb: Frame = self._ui.selectedBar
-		local ref: Frame = self._ui.tabList
-
+		local ref: GuiObject = (tab._btn.Parent :: any) -- this will be tabButtons
+	
 		local barH = sb.AbsoluteSize.Y
 		if barH <= 0 then barH = 34 end
-
-		local btnAbsY = tab._btn.AbsolutePosition.Y
-		local refAbsY = ref.AbsolutePosition.Y
-		local btnH = tab._btn.AbsoluteSize.Y
-
-		-- most robust: use absolute positions only
-		local y = (btnAbsY - refAbsY) + math.floor((btnH - barH) / 2)
-
+	
+		-- position relative to the same parent that UIListLayout is moving
+		local y = (tab._btn.AbsolutePosition.Y - ref.AbsolutePosition.Y)
+			+ math.floor((tab._btn.AbsoluteSize.Y - barH) / 2)
+	
 		if instant then
 			sb.Position = UDim2.new(0, -6, 0, y)
 		else
@@ -733,6 +721,7 @@ end
 			})
 		end
 	end
+	
 
 	function self:_UpdateSelectedBarDeferred(instant: boolean?)
 		task.spawn(function()
