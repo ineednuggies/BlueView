@@ -1797,13 +1797,22 @@ function GroupMT:AddDropdown(text: string, items: {string}, default: string?, ca
 
 	local function openNow()
 		panel.Visible = true
-		rebuild(search.Text)
-		-- re-center under button in case of autoscale
-		panel.Position = UDim2.new(0, btn.Position.X.Offset, 1, 6)
 		panel.Size = UDim2.fromOffset(btn.AbsoluteSize.X, 0)
+		-- position using absolute coords so it lines up under the button
+		window:_PositionPopupUnder(panel, btn, 6, btn.AbsoluteSize.X)
 
+		rebuild(search.Text)
 		local targetH = math.min(PANEL_MAX, 52 + layout.AbsoluteContentSize.Y + 16)
-		tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.fromOffset(btn.AbsoluteSize.X, targetH)})
+		tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+			Size = UDim2.fromOffset(btn.AbsoluteSize.X, targetH),
+		})
+		-- re-position after size anim starts (clamp uses popup height)
+		task.defer(function()
+			if panel.Visible then
+				window:_PositionPopupUnder(panel, btn, 6, btn.AbsoluteSize.X)
+			end
+		end)
+
 		window:_SetActivePopup(panel, closeNow)
 		open = true
 	end
@@ -1982,11 +1991,20 @@ function GroupMT:AddMultiDropdown(text: string, items: {string}, default: {strin
 
 	local function openNow()
 		panel.Visible = true
-		rebuild(search.Text)
-		panel.Position = UDim2.new(0, btn.Position.X.Offset, 1, 6)
 		panel.Size = UDim2.fromOffset(btn.AbsoluteSize.X, 0)
+		window:_PositionPopupUnder(panel, btn, 6, btn.AbsoluteSize.X)
+
+		rebuild(search.Text)
 		local targetH = math.min(PANEL_MAX, 52 + layout.AbsoluteContentSize.Y + 16)
-		tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.fromOffset(btn.AbsoluteSize.X, targetH)})
+		tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+			Size = UDim2.fromOffset(btn.AbsoluteSize.X, targetH),
+		})
+		task.defer(function()
+			if panel.Visible then
+				window:_PositionPopupUnder(panel, btn, 6, btn.AbsoluteSize.X)
+			end
+		end)
+
 		window:_SetActivePopup(panel, closeNow)
 		open = true
 	end
