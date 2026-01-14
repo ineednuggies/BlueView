@@ -2119,7 +2119,7 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 	window:_BindTheme((wheel:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 
 
-		if WHEEL_IMG ~= "" and WHEEL_IMG ~= "rbxassetid://1003599924" then
+		if WHEEL_IMG ~= "" and WHEEL_IMG ~= "rbxassetid://0" then
 		    mk("ImageLabel", {
 		        BackgroundTransparency = 1,
 		        Size = UDim2.fromScale(1, 1),
