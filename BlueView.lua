@@ -644,39 +644,6 @@ local root = mk("Frame", {
 		self._activePopupOpenedAt = os.clock()
 	end
 
--- Position a popup directly under an anchor control (centered), clamped to popup layer bounds
-function self:_PositionPopupUnder(anchor: GuiObject, popup: GuiObject, yPad: number?)
-	if not anchor or not popup then return end
-	local layer: Frame = self._ui.popupLayer
-	if not layer or not layer.Parent then return end
-	-- ensure we have valid Absolute* (defer 1 frame if needed)
-	if layer.AbsoluteSize.X <= 0 or popup.AbsoluteSize.X <= 0 then
-		task.defer(function()
-			self:_PositionPopupUnder(anchor, popup, yPad)
-		end)
-		return
-	end
-	yPad = yPad or 6
-	popup.AnchorPoint = Vector2.new(0, 0)
-
-	local aPos = anchor.AbsolutePosition
-	local aSize = anchor.AbsoluteSize
-	local lPos = layer.AbsolutePosition
-	local lSize = layer.AbsoluteSize
-	local pSize = popup.AbsoluteSize
-
-	local desiredX = (aPos.X - lPos.X) + math.floor((aSize.X - pSize.X) / 2)
-	local desiredY = (aPos.Y - lPos.Y) + aSize.Y + yPad
-
-	-- clamp inside layer
-	local maxX = math.max(0, lSize.X - pSize.X)
-	local maxY = math.max(0, lSize.Y - pSize.Y)
-	local x = math.clamp(desiredX, 0, maxX)
-	local y = math.clamp(desiredY, 0, maxY)
-
-	popup.Position = UDim2.new(0, x, 0, y)
-end
-
 	-- close popup on outside click
 	table.insert(self._connections, UserInputService.InputBegan:Connect(function(input, gp)
 		if gp then return end
@@ -1797,22 +1764,13 @@ function GroupMT:AddDropdown(text: string, items: {string}, default: string?, ca
 
 	local function openNow()
 		panel.Visible = true
-		panel.Size = UDim2.fromOffset(btn.AbsoluteSize.X, 0)
-		-- position using absolute coords so it lines up under the button
-		window:_PositionPopupUnder(panel, btn, 6, btn.AbsoluteSize.X)
-
 		rebuild(search.Text)
-		local targetH = math.min(PANEL_MAX, 52 + layout.AbsoluteContentSize.Y + 16)
-		tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-			Size = UDim2.fromOffset(btn.AbsoluteSize.X, targetH),
-		})
-		-- re-position after size anim starts (clamp uses popup height)
-		task.defer(function()
-			if panel.Visible then
-				window:_PositionPopupUnder(panel, btn, 6, btn.AbsoluteSize.X)
-			end
-		end)
+		-- re-center under button in case of autoscale
+		panel.Position = UDim2.new(0, btn.Position.X.Offset, 1, 6)
+		panel.Size = UDim2.fromOffset(btn.AbsoluteSize.X, 0)
 
+		local targetH = math.min(PANEL_MAX, 52 + layout.AbsoluteContentSize.Y + 16)
+		tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.fromOffset(btn.AbsoluteSize.X, targetH)})
 		window:_SetActivePopup(panel, closeNow)
 		open = true
 	end
@@ -1991,20 +1949,11 @@ function GroupMT:AddMultiDropdown(text: string, items: {string}, default: {strin
 
 	local function openNow()
 		panel.Visible = true
-		panel.Size = UDim2.fromOffset(btn.AbsoluteSize.X, 0)
-		window:_PositionPopupUnder(panel, btn, 6, btn.AbsoluteSize.X)
-
 		rebuild(search.Text)
+		panel.Position = UDim2.new(0, btn.Position.X.Offset, 1, 6)
+		panel.Size = UDim2.fromOffset(btn.AbsoluteSize.X, 0)
 		local targetH = math.min(PANEL_MAX, 52 + layout.AbsoluteContentSize.Y + 16)
-		tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-			Size = UDim2.fromOffset(btn.AbsoluteSize.X, targetH),
-		})
-		task.defer(function()
-			if panel.Visible then
-				window:_PositionPopupUnder(panel, btn, 6, btn.AbsoluteSize.X)
-			end
-		end)
-
+		tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.fromOffset(btn.AbsoluteSize.X, targetH)})
 		window:_SetActivePopup(panel, closeNow)
 		open = true
 	end
