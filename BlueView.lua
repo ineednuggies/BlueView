@@ -2126,7 +2126,7 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 		        Image = WHEEL_IMG,
 		        ImageTransparency = 0,          -- (force visible)
 		        ScaleType = Enum.ScaleType.Fit,
-				Rotation = 45,
+				Rotation = 90,
 		        ZIndex = 222,                   -- (put it above the wheel frame)
 		        Parent = wheel,
 		    })
