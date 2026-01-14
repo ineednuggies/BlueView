@@ -2127,7 +2127,6 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 			ScaleType = Enum.ScaleType.Fit,
 			ZIndex = 221,
 			Parent = wheel,
-			Position = UDim2.fromOffset(0, 0),
 		})
 	end
 
