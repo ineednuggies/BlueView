@@ -1799,7 +1799,7 @@ function GroupMT:AddDropdown(text: string, items: {string}, default: string?, ca
 		panel.Visible = true
 		panel.Size = UDim2.fromOffset(btn.AbsoluteSize.X, 0)
 		-- position using absolute coords so it lines up under the button
-		window:_PositionPopupUnder(panel, btn, 6, btn.AbsoluteSize.X)
+		window:_PositionPopupUnder(btn, panel, 6)
 
 		rebuild(search.Text)
 		local targetH = math.min(PANEL_MAX, 52 + layout.AbsoluteContentSize.Y + 16)
@@ -1809,7 +1809,7 @@ function GroupMT:AddDropdown(text: string, items: {string}, default: string?, ca
 		-- re-position after size anim starts (clamp uses popup height)
 		task.defer(function()
 			if panel.Visible then
-				window:_PositionPopupUnder(panel, btn, 6, btn.AbsoluteSize.X)
+				window:_PositionPopupUnder(btn, panel, 6)
 			end
 		end)
 
@@ -1992,7 +1992,7 @@ function GroupMT:AddMultiDropdown(text: string, items: {string}, default: {strin
 	local function openNow()
 		panel.Visible = true
 		panel.Size = UDim2.fromOffset(btn.AbsoluteSize.X, 0)
-		window:_PositionPopupUnder(panel, btn, 6, btn.AbsoluteSize.X)
+		window:_PositionPopupUnder(btn, panel, 6)
 
 		rebuild(search.Text)
 		local targetH = math.min(PANEL_MAX, 52 + layout.AbsoluteContentSize.Y + 16)
@@ -2001,7 +2001,7 @@ function GroupMT:AddMultiDropdown(text: string, items: {string}, default: {strin
 		})
 		task.defer(function()
 			if panel.Visible then
-				window:_PositionPopupUnder(panel, btn, 6, btn.AbsoluteSize.X)
+				window:_PositionPopupUnder(btn, panel, 6)
 			end
 		end)
 
