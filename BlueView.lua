@@ -644,6 +644,39 @@ local root = mk("Frame", {
 		self._activePopupOpenedAt = os.clock()
 	end
 
+-- Position a popup directly under an anchor control (centered), clamped to popup layer bounds
+function self:_PositionPopupUnder(anchor: GuiObject, popup: GuiObject, yPad: number?)
+	if not anchor or not popup then return end
+	local layer: Frame = self._ui.popupLayer
+	if not layer or not layer.Parent then return end
+	-- ensure we have valid Absolute* (defer 1 frame if needed)
+	if layer.AbsoluteSize.X <= 0 or popup.AbsoluteSize.X <= 0 then
+		task.defer(function()
+			self:_PositionPopupUnder(anchor, popup, yPad)
+		end)
+		return
+	end
+	yPad = yPad or 6
+	popup.AnchorPoint = Vector2.new(0, 0)
+
+	local aPos = anchor.AbsolutePosition
+	local aSize = anchor.AbsoluteSize
+	local lPos = layer.AbsolutePosition
+	local lSize = layer.AbsoluteSize
+	local pSize = popup.AbsoluteSize
+
+	local desiredX = (aPos.X - lPos.X) + math.floor((aSize.X - pSize.X) / 2)
+	local desiredY = (aPos.Y - lPos.Y) + aSize.Y + yPad
+
+	-- clamp inside layer
+	local maxX = math.max(0, lSize.X - pSize.X)
+	local maxY = math.max(0, lSize.Y - pSize.Y)
+	local x = math.clamp(desiredX, 0, maxX)
+	local y = math.clamp(desiredY, 0, maxY)
+
+	popup.Position = UDim2.new(0, x, 0, y)
+end
+
 	-- close popup on outside click
 	table.insert(self._connections, UserInputService.InputBegan:Connect(function(input, gp)
 		if gp then return end
@@ -1990,7 +2023,7 @@ end
 --////////////////////////////////////////////////////////////
 -- NOTE: This uses math-based wheel picking (no texture required).
 -- If you want a pretty wheel image, set WHEEL_IMG to an uploaded wheel PNG and it will render behind the picker.
-local WHEEL_IMG = "1003599924" -- e.g. "rbxassetid://<your_color_wheel_png>"
+local WHEEL_IMG = "rbxasset://textures/ui/ColorWheel.png" -- e.g. "rbxassetid://<your_color_wheel_png>"
 
 local function hsvToColor(h: number, s: number, v: number): Color3
 	return Color3.fromHSV(h, s, v)
