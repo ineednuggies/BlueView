@@ -2105,7 +2105,9 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 	local PANEL_H = 178
 
 	-- wheel area
-	local wheel = mk("Frame", {
+	local wheel = mk("Image-Label", {
+		BackgroundTransparency = 1,
+		Image = WHEEL_IMG,
 		BackgroundColor3 = Color3.fromRGB(25, 23, 40),
 		BorderSizePixel = 0,
 		Position = UDim2.fromOffset(10, 10),
