@@ -700,28 +700,30 @@ end
 	-- Selected bar updater
 	--////////////////////////////////////////////////////////////
 		function self:_UpdateSelectedBar(instant: boolean?)
-		local tab = self.SelectedTab
-		if not tab or not tab._btn or not tab._btn.Parent then return end
-	
-		local sb: Frame = self._ui.selectedBar
-		local ref: GuiObject = (tab._btn.Parent :: any) -- this will be tabButtons
-	
-		local barH = sb.AbsoluteSize.Y
-		if barH <= 0 then barH = 34 end
-	
-		-- position relative to the same parent that UIListLayout is moving
-		local y = (tab._btn.AbsolutePosition.Y - ref.AbsolutePosition.Y)
-			+ math.floor((tab._btn.AbsoluteSize.Y - barH) / 2)
-	
-		if instant then
-			sb.Position = UDim2.new(0, -6, 0, y)
-		else
-			tween(sb, TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-				Position = UDim2.new(0, -6, 0, y),
-			})
+			local tab = self.SelectedTab
+			if not tab or not tab._btn or not tab._btn.Parent then return end
+		
+			local sb: Frame = self._ui.selectedBar
+			local ref: GuiObject = (tab._btn.Parent :: any) -- ✅ tabButtons (same space as buttons)
+		
+			local barH = sb.AbsoluteSize.Y
+			if barH <= 0 then barH = 34 end
+		
+			local btnAbsY = tab._btn.AbsolutePosition.Y
+			local refAbsY = ref.AbsolutePosition.Y
+			local btnH = tab._btn.AbsoluteSize.Y
+		
+			local y = (btnAbsY - refAbsY) + math.floor((btnH - barH) / 2)
+		
+			if instant then
+				sb.Position = UDim2.new(0, -6, 0, y)
+			else
+				tween(sb, TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+					Position = UDim2.new(0, -6, 0, y),
+				})
+			end
 		end
-	end
-	
+
 
 	function self:_UpdateSelectedBarDeferred(instant: boolean?)
 		task.spawn(function()
