@@ -1,3 +1,17 @@
+--!strict
+-- BlueView.lua (SpareStackUI) - Full updated package build
+-- Features:
+-- ✅ Autoscaling + mobile support
+-- ✅ Sidebar categories + tabs w/ optional icons
+-- ✅ Inactive tabs grey, active bright
+-- ✅ Selected tab bar correct on first layout + switches
+-- ✅ Dragging doesn't snap back to center
+-- ✅ Main search starts empty (placeholder only)
+-- ✅ Dropdown + MultiDropdown: inline under control, searchable, checkbox multi-select
+-- ✅ ColorPicker: color wheel (HSV) + presets (incl. white)
+-- ✅ Popup manager: only ONE popup open at a time; switching tabs closes popups
+-- ✅ Theme binding hooks: ThemeManager can live-update all bound UI
+-- ✅ Config flags: ConfigManager can save/load toggles, sliders, dropdowns, multi dropdowns, colors
 
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -251,10 +265,6 @@ local root = mk("Frame", {
 	local uiScale = mk("UIScale", {Scale = 1, Parent = root})
 	local minScale = options.MinScale or 0.68
 	local maxScale = options.MaxScale or 1.0
-		uiScale:GetPropertyChangedSignal("Scale"):Connect(function()
-			self:_UpdateSelectedBarDeferred(true)
-		end)
-
 
 	local function updateScale()
 		if not autoScale then uiScale.Scale = 1; return end
@@ -444,7 +454,7 @@ local root = mk("Frame", {
 		Size = UDim2.new(0, 3, 0, 34),
 		Position = UDim2.new(0, -6, 0, 0),
 		ZIndex = 50,
-		Parent = tabButtons,
+		Parent = tabList,
 	})
 	withUICorner(selectedBar, 999)
 
@@ -699,31 +709,30 @@ end
 	--////////////////////////////////////////////////////////////
 	-- Selected bar updater
 	--////////////////////////////////////////////////////////////
-		function self:_UpdateSelectedBar(instant: boolean?)
-			local tab = self.SelectedTab
-			if not tab or not tab._btn or not tab._btn.Parent then return end
-		
-			local sb: Frame = self._ui.selectedBar
-			local ref: GuiObject = (tab._btn.Parent :: any) -- ✅ tabButtons (same space as buttons)
-		
-			local barH = sb.AbsoluteSize.Y
-			if barH <= 0 then barH = 34 end
-		
-			local btnAbsY = tab._btn.AbsolutePosition.Y
-			local refAbsY = ref.AbsolutePosition.Y
-			local btnH = tab._btn.AbsoluteSize.Y
-		
-			local y = (btnAbsY - refAbsY) + math.floor((btnH - barH) / 2)
-		
-			if instant then
-				sb.Position = UDim2.new(0, -6, 0, y)
-			else
-				tween(sb, TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-					Position = UDim2.new(0, -6, 0, y),
-				})
-			end
-		end
+	function self:_UpdateSelectedBar(instant: boolean?)
+		local tab = self.SelectedTab
+		if not tab or not tab._btn or not tab._btn.Parent then return end
+		local sb: Frame = self._ui.selectedBar
+		local ref: Frame = self._ui.tabList
 
+		local barH = sb.AbsoluteSize.Y
+		if barH <= 0 then barH = 34 end
+
+		local btnAbsY = tab._btn.AbsolutePosition.Y
+		local refAbsY = ref.AbsolutePosition.Y
+		local btnH = tab._btn.AbsoluteSize.Y
+
+		-- most robust: use absolute positions only
+		local y = (btnAbsY - refAbsY) + math.floor((btnH - barH) / 2)
+
+		if instant then
+			sb.Position = UDim2.new(0, -6, 0, y)
+		else
+			tween(sb, TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+				Position = UDim2.new(0, -6, 0, y),
+			})
+		end
+	end
 
 	function self:_UpdateSelectedBarDeferred(instant: boolean?)
 		task.spawn(function()
@@ -2032,7 +2041,7 @@ end
 --////////////////////////////////////////////////////////////
 -- NOTE: This uses math-based wheel picking (no texture required).
 -- If you want a pretty wheel image, set WHEEL_IMG to an uploaded wheel PNG and it will render behind the picker.
-local WHEEL_IMG = "rbxassetid://7017517837" -- e.g. "rbxassetid://<your_color_wheel_png>"
+local WHEEL_IMG = "rbxasset://textures/ui/ColorWheel.png" -- e.g. "rbxassetid://<your_color_wheel_png>"
 
 local function hsvToColor(h: number, s: number, v: number): Color3
 	return Color3.fromHSV(h, s, v)
@@ -2095,9 +2104,8 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 
 	local PANEL_H = 178
 
-
+	-- wheel area
 	local wheel = mk("Frame", {
-		BackgroundTransparency = 1,
 		BackgroundColor3 = Color3.fromRGB(25, 23, 40),
 		BorderSizePixel = 0,
 		Position = UDim2.fromOffset(10, 10),
@@ -2109,20 +2117,17 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 	withUIStroke(wheel, theme.Stroke, 0.65, 1)
 	window:_BindTheme((wheel:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 
-
-		if WHEEL_IMG ~= "" and WHEEL_IMG ~= "rbxassetid://0" then
-		    mk("ImageLabel", {
-		        BackgroundTransparency = 1,
-		        Size = UDim2.fromScale(1, 1),
-		        Image = WHEEL_IMG,
-		        ImageTransparency = 0,          -- (force visible)
-		        ScaleType = Enum.ScaleType.Fit,
-				Rotation = 90,
-		        ZIndex = 222,                   -- (put it above the wheel frame)
-		        Parent = wheel,
-		    })
-		end
-
+	-- optional wheel image
+	if WHEEL_IMG ~= "" then
+		mk("ImageLabel", {
+			BackgroundTransparency = 1,
+			Size = UDim2.fromScale(1, 1),
+			Image = WHEEL_IMG,
+			ScaleType = Enum.ScaleType.Fit,
+			ZIndex = 221,
+			Parent = wheel,
+		})
+	end
 
 	-- wheel cursor
 	local wheelCursor = mk("Frame", {
