@@ -374,7 +374,6 @@ local root = mk("Frame", {
 			ZIndex = 13,
 			Parent = topbar, -- or btnWrap; topbar gives you more room
 		})
-		self:_BindTheme(keyHint, "TextColor3", "Muted")
 
 
 	local function makeTopButton(label: string)
@@ -654,6 +653,7 @@ local root = mk("Frame", {
 	end
 
 	-- core binds
+	self:_BindTheme(keyHint, "TextColor3", "Muted")
 	self:_BindTheme(root, "BackgroundColor3", "BG")
 	self:_BindTheme((root:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 	self:_BindTheme(topbar, "BackgroundColor3", "Panel2")
@@ -719,29 +719,24 @@ function self:_PositionPopupUnder(anchor: GuiObject, popup: GuiObject, yPad: num
 	popup.Position = UDim2.new(0, x, 0, y)
 end
 
-	-- close popup on outside click
-			table.insert(self._connections, UserInputService.InputBegan:Connect(function(input, gp)
-				if gp then return end
-			
-				if input.KeyCode == self._toggleKey then
-					self:Toggle()
-				elseif input.KeyCode == self._minimizeKey then
-					self:Toggle()
-				end
-			end))
+	-- close popup on outside click + global keybinds
+	-- - ToggleKey: shows/hides the whole UI
+	-- - MinimizeKey: shows/hides the whole UI (same behavior, just a separate bind)
+	table.insert(self._connections, UserInputService.InputBegan:Connect(function(input, gp)
+		if gp then return end
 
+		-- keybinds
+		if input.KeyCode == self._toggleKey or input.KeyCode == self._minimizeKey then
+			self:Toggle()
+			return
+		end
+
+		-- outside click closes active popup
+		if not self._activePopup then return end
 		if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
 			return
 		end
-		local target = input.Target
-		-- InputObject doesn't always have Target in all contexts; guard:
-		local ok, guiObj = pcall(function()
-			return (UserInputService:GetFocusedTextBox() :: any)
-		end)
-		-- If click is inside popup, ignore:
-		local mouse = LocalPlayer:GetMouse()
-		local hovered = mouse.Target
-		-- NOTE: For ScreenGuis, use GetGuiObjectsAtPosition for accuracy:
+
 		local pos = UserInputService:GetMouseLocation()
 		local objs = gui:GetGuiObjectsAtPosition(pos.X, pos.Y)
 		for _, o in ipairs(objs) do
@@ -749,50 +744,27 @@ end
 				return
 			end
 		end
+
 		self:_CloseActivePopup()
 	end))
+
 
 	--////////////////////////////////////////////////////////////
 	-- Selected bar updater
 	--////////////////////////////////////////////////////////////
-		function self:_UpdateSelectedBar(instant: boolean?)
+				function self:_UpdateSelectedBar(instant: boolean?)
 			local tab = self.SelectedTab
 			if not tab or not tab._btn or not tab._btn.Parent then return end
-		
+
 			local sb: Frame = self._ui.selectedBar
-			local container: Frame = self._ui.tabButtons
-			local layout: UIListLayout? = self._ui.tabLayout
-		
-			-- UIListLayout padding (in offsets)
-			local pad = 0
-			if layout and layout.Padding then
-				pad = layout.Padding.Offset
-			end
-		
-			-- Collect sidebar items in layout order (tabs + category headers + spacers)
-			local items: {GuiObject} = {}
-			for _, child in ipairs(container:GetChildren()) do
-				if child:IsA("GuiObject") then
-					table.insert(items, child :: GuiObject)
-				end
-			end
-			table.sort(items, function(a, b)
-				return (a.LayoutOrder or 0) < (b.LayoutOrder or 0)
-			end)
-		
-			-- Sum Y by adding each item's Size.Y.Offset + padding until we hit the selected tab button
-			local y = 0
-			for _, item in ipairs(items) do
-				if item == tab._btn then
-					local btnH = item.Size.Y.Offset
-					local barH = sb.Size.Y.Offset
-					y += math.floor((btnH - barH) / 2)
-					break
-				end
-		
-				y += item.Size.Y.Offset + pad
-			end
-		
+			local container: GuiObject = self._ui.tabButtons
+
+			-- Robust, UIScale-safe positioning:
+			-- Use AbsolutePosition deltas instead of summing offsets/padding.
+			local y = (tab._btn.AbsolutePosition.Y - container.AbsolutePosition.Y)
+			y += math.floor((tab._btn.AbsoluteSize.Y - sb.AbsoluteSize.Y) / 2)
+			if y < 0 then y = 0 end
+
 			local pos = UDim2.new(0, -6, 0, y)
 			if instant then
 				sb.Position = pos
@@ -800,7 +772,6 @@ end
 				tween(sb, TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), { Position = pos })
 			end
 		end
-		
 
 	function self:_UpdateSelectedBarDeferred(instant: boolean?)
 		task.spawn(function()
@@ -894,11 +865,6 @@ end
 	end
 	closeBtn.MouseButton1Click:Connect(doKill)
 
-	-- Toggle key
-	table.insert(self._connections, UserInputService.InputBegan:Connect(function(input, gp)
-		if gp then return end
-		if input.KeyCode == self._toggleKey then self:Toggle() end
-	end))
 
 	-- Search filter (groupbox title match)
 	searchInput:GetPropertyChangedSignal("Text"):Connect(function()
@@ -1448,6 +1414,10 @@ local function addRadialGlowSimple(host: GuiObject, color: Color3, pad: number, 
 		intensity = math.clamp(intensity, 0, 1)
 		if disabled then img.ImageTransparency = 1 return end
 		img.ImageTransparency = 1 - ((1 - alpha) * intensity)
+	end
+
+	local function setColor(newColor: Color3)
+		img.ImageColor3 = newColor
 	end
 
 	host:GetPropertyChangedSignal("Position"):Connect(sync)
