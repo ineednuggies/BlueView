@@ -15,6 +15,7 @@
 
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
@@ -126,6 +127,8 @@ local DefaultTheme: Theme = {
 --////////////////////////////////////////////////////////////
 export type WindowOptions = {
 	Title: string?,
+	MinimizeKey: Enum.KeyCode?,
+	UnlockMouseOnOpen: boolean?,
 	Width: number?,
 	Height: number?,
 	Parent: Instance?,
@@ -356,6 +359,24 @@ local root = mk("Frame", {
 		Parent = topbar,
 	})
 
+
+
+		local keyHint = mk("TextLabel", {
+			BackgroundTransparency = 1,
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, -98, 0.5, 0), -- sits left of the buttons
+			Size = UDim2.fromOffset(160, 20),
+			TextXAlignment = Enum.TextXAlignment.Right,
+			Text = "Minimize: " .. (options.MinimizeKey or Enum.KeyCode.RightControl).Name,
+			TextSize = 12,
+			Font = Enum.Font.Gotham,
+			TextColor3 = theme.Muted,
+			ZIndex = 13,
+			Parent = topbar, -- or btnWrap; topbar gives you more room
+		})
+		self:_BindTheme(keyHint, "TextColor3", "Muted")
+
+
 	local function makeTopButton(label: string)
 		local b = mk("TextButton", {
 			BackgroundColor3 = theme.Panel2,
@@ -562,8 +583,27 @@ local root = mk("Frame", {
 	self._killOnClose = options.KillOnClose == true
 	self._onKill = options.OnKill
 	self._toggleKey = options.ToggleKey or Enum.KeyCode.RightShift
+	self._minimizeKey = options.MinimizeKey or Enum.KeyCode.RightControl
+	self._unlockMouse = options.UnlockMouseOnOpen == true
 	self._visible = true
 	self._minToken = 0
+		local prevMouseBehavior = UserInputService.MouseBehavior
+		local prevMouseIcon = UserInputService.MouseIconEnabled
+		
+		function self:_ApplyMouseState()
+			if not self._unlockMouse then return end
+		
+			if self._visible then
+				prevMouseBehavior = UserInputService.MouseBehavior
+				prevMouseIcon = UserInputService.MouseIconEnabled
+				UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+				UserInputService.MouseIconEnabled = true
+			else
+				UserInputService.MouseBehavior = prevMouseBehavior
+				UserInputService.MouseIconEnabled = prevMouseIcon
+			end
+		end
+
 
 	self._themeBindings = {} :: {ThemeBinding}
 	self._themeWatchers = {} :: { (Theme) -> () }
@@ -574,6 +614,7 @@ local root = mk("Frame", {
 	self._activePopupClose = nil :: PopupCloser?
 
 	self._ui = {
+		keyHint = keyHint,
 		gui = gui,
 		popupLayer = popupLayer,
 		root = root,
@@ -593,6 +634,7 @@ local root = mk("Frame", {
 		searchBox = searchBox,
 		searchIcon = searchIcon,
 	}
+		
 
 	--////////////////////////////////////////////////////////////
 	-- Theme binding helpers
@@ -678,12 +720,16 @@ function self:_PositionPopupUnder(anchor: GuiObject, popup: GuiObject, yPad: num
 end
 
 	-- close popup on outside click
-	table.insert(self._connections, UserInputService.InputBegan:Connect(function(input, gp)
-		if gp then return end
-		if not self._activePopup then return end
-	if self._activePopupOpenedAt and (os.clock() - self._activePopupOpenedAt) < 0.12 then
-		return
-	end
+			table.insert(self._connections, UserInputService.InputBegan:Connect(function(input, gp)
+				if gp then return end
+			
+				if input.KeyCode == self._toggleKey then
+					self:Toggle()
+				elseif input.KeyCode == self._minimizeKey then
+					self:Toggle()
+				end
+			end))
+
 		if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
 			return
 		end
@@ -884,9 +930,18 @@ function WindowMT:SetKillCallback(killOnClose: boolean, onKill: (() -> ())?)
 	self._killOnClose = killOnClose
 	self._onKill = onKill
 end
+	
+function WindowMT:SetMinimizeKey(key: Enum.KeyCode)
+	self._minimizeKey = key
+	if self._ui.keyHint then
+		self._ui.keyHint.Text = "Minimize: " .. key.Name
+	end
+end
+
 function WindowMT:Toggle(state: boolean?)
 	if state == nil then self._visible = not self._visible else self._visible = state end
 	self.Gui.Enabled = self._visible
+	self:_ApplyMouseState()
 	if not self._visible then
 		self:_CloseActivePopup()
 	end
