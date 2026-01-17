@@ -753,19 +753,44 @@ end
 	--////////////////////////////////////////////////////////////
 	-- Selected bar updater
 	--////////////////////////////////////////////////////////////
-				function self:_UpdateSelectedBar(instant: boolean?)
+		function self:_UpdateSelectedBar(instant: boolean?)
 			local tab = self.SelectedTab
 			if not tab or not tab._btn or not tab._btn.Parent then return end
-
+		
 			local sb: Frame = self._ui.selectedBar
-			local container: GuiObject = self._ui.tabButtons
-
-			-- Robust, UIScale-safe positioning:
-			-- Use AbsolutePosition deltas instead of summing offsets/padding.
-			local y = (tab._btn.AbsolutePosition.Y - container.AbsolutePosition.Y)
-			y += math.floor((tab._btn.AbsoluteSize.Y - sb.AbsoluteSize.Y) / 2)
-			if y < 0 then y = 0 end
-
+			local container: Frame = self._ui.tabButtons
+			local layout: UIListLayout? = self._ui.tabLayout
+		
+			-- UIListLayout padding (in offsets)
+			local pad = 0
+			if layout and layout.Padding then
+				pad = layout.Padding.Offset
+			end
+		
+			-- Collect sidebar items in layout order (tabs + category headers + spacers)
+			local items: {GuiObject} = {}
+			for _, child in ipairs(container:GetChildren()) do
+				if child:IsA("GuiObject") then
+					table.insert(items, child :: GuiObject)
+				end
+			end
+			table.sort(items, function(a, b)
+				return (a.LayoutOrder or 0) < (b.LayoutOrder or 0)
+			end)
+		
+			-- Sum Y by adding each item's Size.Y.Offset + padding until we hit the selected tab button
+			local y = 0
+			for _, item in ipairs(items) do
+				if item == tab._btn then
+					local btnH = item.Size.Y.Offset
+					local barH = sb.Size.Y.Offset
+					y += math.floor((btnH - barH) / 2)
+					break
+				end
+		
+				y += item.Size.Y.Offset + pad
+			end
+		
 			local pos = UDim2.new(0, -6, 0, y)
 			if instant then
 				sb.Position = pos
@@ -773,6 +798,7 @@ end
 				tween(sb, TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), { Position = pos })
 			end
 		end
+		
 
 	function self:_UpdateSelectedBarDeferred(instant: boolean?)
 		task.spawn(function()
