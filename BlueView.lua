@@ -146,6 +146,7 @@ local function makeIcon(iconAsset: any, size: number, transparency: number?)
 	end
 
 	return mk('ImageLabel', props)
+end
 
 local function applyIconToImage(img: ImageLabel, iconAsset: any)
 	if not img then return end
