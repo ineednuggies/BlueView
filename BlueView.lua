@@ -70,29 +70,82 @@ end
 --////////////////////////////////////////////////////////////
 -- Icons (Lucide-ready)
 --////////////////////////////////////////////////////////////
-export type IconProvider = (name: string) -> string?
+-- Obsidian-style lucide support:
+-- If you pass WindowOptions.IconProvider, it will be used first.
+-- If not, we auto-load deividcomsono/lucide-roblox-direct (executor-friendly).
 
-local function resolveIcon(iconProvider: IconProvider?, icon: string?): string?
-	if not icon then return nil end
-	if string.find(icon, "rbxassetid://") == 1 then
-		return icon
+type LucideAsset = { Url: string, ImageRectSize: Vector2, ImageRectOffset: Vector2 }
+export type IconProvider = (name: string) -> (string | LucideAsset)?
+
+local _Lucide: any = nil
+local function getLucide()
+	if _Lucide ~= nil then return _Lucide end
+	-- Default: try to load lucide-roblox-direct (uses getcustomasset/writefile; executor environments)
+	local ok, mod = pcall(function()
+		local src = game:HttpGet('https://raw.githubusercontent.com/deividcomsono/lucide-roblox-direct/refs/heads/main/source.lua')
+		local fn = loadstring(src)
+		return fn and fn() or nil
+	end)
+	if ok and type(mod) == 'table' and type(mod.GetAsset) == 'function' then
+		_Lucide = mod
+	else
+		_Lucide = false
 	end
-	local prefix = "lucide:"
-	if string.find(icon, prefix) == 1 then
-		local key = string.sub(icon, #prefix + 1)
-		return iconProvider and iconProvider(key) or nil
-	end
-	return iconProvider and iconProvider(icon) or nil
+	return _Lucide
 end
 
-local function makeIcon(imageId: string?, size: number, transparency: number?)
-	return mk("ImageLabel", {
+local function resolveIcon(iconProvider: IconProvider?, icon: string?): (string | LucideAsset)?
+	if not icon or icon == '' then return nil end
+	if string.find(icon, 'rbxassetid://') == 1 then
+		return icon
+	end
+
+	local prefix = 'lucide:'
+	if string.find(icon, prefix) == 1 then
+		local key = string.sub(icon, #prefix + 1)
+		-- 1) user-provided provider wins
+		if iconProvider then
+			local ok, res = pcall(iconProvider, key)
+			if ok and res ~= nil then return res end
+		end
+		-- 2) auto lucide (Obsidian approach)
+		local luc = getLucide()
+		if luc and luc ~= false then
+			local ok, asset = pcall(luc.GetAsset, key)
+			if ok and type(asset) == 'table' and asset.Url then
+				return asset
+			end
+		end
+		return nil
+	end
+
+	-- non-lucide string; let provider resolve it if present
+	if iconProvider then
+		local ok, res = pcall(iconProvider, icon)
+		if ok and res ~= nil then return res end
+	end
+	return nil
+end
+
+local function makeIcon(iconAsset: any, size: number, transparency: number?)
+	local props: {[string]: any} = {
 		BackgroundTransparency = 1,
 		Size = UDim2.fromOffset(size, size),
-		Image = imageId or "",
 		ImageTransparency = transparency or 0,
 		ScaleType = Enum.ScaleType.Fit,
-	})
+	}
+
+	if type(iconAsset) == 'string' then
+		props.Image = iconAsset
+	elseif type(iconAsset) == 'table' then
+		props.Image = iconAsset.Url or iconAsset.Image or ''
+		if iconAsset.ImageRectOffset then props.ImageRectOffset = iconAsset.ImageRectOffset end
+		if iconAsset.ImageRectSize then props.ImageRectSize = iconAsset.ImageRectSize end
+	else
+		props.Image = ''
+	end
+
+	return mk('ImageLabel', props)
 end
 
 --////////////////////////////////////////////////////////////
