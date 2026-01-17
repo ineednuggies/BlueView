@@ -2239,8 +2239,8 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 	withUICorner(valFill, 10)
 
 	local valGrad = mk("UIGradient", {
-		Rotation = 90,
-		Color = ColorSequence.new(Color3.new(0,0,0), Color3.new(1,1,1)),
+		Rotation = 270,
+		Color = ColorSequence.new(Color3.new(1,1,1), Color3.new(0,0,0)),
 		Parent = valFill,
 	})
 
@@ -2281,7 +2281,7 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 		valCursor.Position = UDim2.new(0, 0, 1 - v, -1)
 
 		-- adjust value gradient based on hue/sat
-		valGrad.Color = ColorSequence.new(Color3.new(0,0,0), hsvToColor(h, s, 1))
+		valGrad.Color = ColorSequence.new(hsvToColor(h, s, 1), Color3.new(0,0,0))
 	end
 
 	local function applyColor(fire: boolean)
