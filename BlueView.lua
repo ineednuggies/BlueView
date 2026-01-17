@@ -2188,7 +2188,7 @@ end
 --////////////////////////////////////////////////////////////
 -- NOTE: This uses math-based wheel picking (no texture required).
 -- If you want a pretty wheel image, set WHEEL_IMG to an uploaded wheel PNG and it will render behind the picker.
-local WHEEL_IMG = "rbxassetid://16427987474" -- e.g. "rbxassetid://<your_color_wheel_png>"
+local WHEEL_IMG = "rbxassetid://78013985921887" -- e.g. "rbxassetid://<your_color_wheel_png>"
 
 local function hsvToColor(h: number, s: number, v: number): Color3
 	return Color3.fromHSV(h, s, v)
@@ -2273,7 +2273,7 @@ function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Colo
 			ScaleType = Enum.ScaleType.Fit,
 			ZIndex = 221,
 			Parent = wheel,
-			Rotation = 90,
+			Rotation = 360,
 		})
 	end
 
