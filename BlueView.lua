@@ -146,6 +146,24 @@ local function makeIcon(iconAsset: any, size: number, transparency: number?)
 	end
 
 	return mk('ImageLabel', props)
+
+local function applyIconToImage(img: ImageLabel, iconAsset: any)
+	if not img then return end
+	if type(iconAsset) == "string" then
+		img.Image = iconAsset
+		img.ImageRectOffset = Vector2.new(0,0)
+		img.ImageRectSize = Vector2.new(0,0)
+	elseif type(iconAsset) == "table" then
+		img.Image = iconAsset.Url or iconAsset.Image or ""
+		if iconAsset.ImageRectOffset then img.ImageRectOffset = iconAsset.ImageRectOffset end
+		if iconAsset.ImageRectSize then img.ImageRectSize = iconAsset.ImageRectSize end
+	else
+		img.Image = ""
+		img.ImageRectOffset = Vector2.new(0,0)
+		img.ImageRectSize = Vector2.new(0,0)
+	end
+end
+
 end
 
 --////////////////////////////////////////////////////////////
@@ -1315,12 +1333,14 @@ local function makeGroupbox(theme: Theme, iconProvider: IconProvider?, title: st
 	local icon = mk("ImageLabel", {
 		BackgroundTransparency = 1,
 		Size = UDim2.fromScale(1, 1),
-		Image = chevronDown or "",
+		Image = "",
 		ImageTransparency = 0.15,
 		Parent = collapseBtn,
 	})
 
-	local fallback = mk("TextLabel", {
+	
+	applyIconToImage(icon :: ImageLabel, chevronDown)
+local fallback = mk("TextLabel", {
 		BackgroundTransparency = 1,
 		Size = UDim2.fromScale(1, 1),
 		Text = chevronDown and "" or "v",
@@ -1392,7 +1412,7 @@ function TabMT:AddGroupbox(title: string, opts: {Side: ("Left"|"Right")?, Initia
 	local HEADER_H = 26
 	local function setIconCollapsed(state: boolean)
 		if chevronDown then
-			icon.Image = state and (chevronRight or chevronDown) or chevronDown
+			applyIconToImage(icon :: ImageLabel, state and (chevronRight or chevronDown) or chevronDown)
 		else
 			fallback.Text = state and ">" or "v"
 		end
@@ -2168,7 +2188,7 @@ end
 --////////////////////////////////////////////////////////////
 -- NOTE: This uses math-based wheel picking (no texture required).
 -- If you want a pretty wheel image, set WHEEL_IMG to an uploaded wheel PNG and it will render behind the picker.
-local WHEEL_IMG = "rbxassetid://16427987424" -- e.g. "rbxassetid://<your_color_wheel_png>"
+local WHEEL_IMG = "rbxassetid://16427987474" -- e.g. "rbxassetid://<your_color_wheel_png>"
 
 local function hsvToColor(h: number, s: number, v: number): Color3
 	return Color3.fromHSV(h, s, v)
