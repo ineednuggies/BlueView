@@ -1,14 +1,12 @@
--- ThemeManager.lua (executor-friendly)
--- Fixes:
--- 1) Default preset no longer starts as Crimson (uses Purple Night if available)
--- 2) Full theme editing restored (all theme keys are editable)
+-- ThemeManager.lua (Lua 5.1 / executor friendly)
+-- Minimal ThemeManager compatible with BlueView.
 
 local ThemeManager = {}
 ThemeManager.__index = ThemeManager
 
 local function clone(t)
 	local o = {}
-	for k, v in pairs(t or {}) do
+	for k, v in pairs(t) do
 		o[k] = v
 	end
 	return o
@@ -66,6 +64,7 @@ function ThemeManager.new()
 end
 
 function ThemeManager:SetPresets(presets)
+	-- presets: table<string, themeTable>
 	if type(presets) == "table" then
 		self._presets = presets
 	else
@@ -75,19 +74,11 @@ end
 
 local function presetNames(presets)
 	local names = {}
-	for name in pairs(presets or {}) do
+	for name in pairs(presets) do
 		table.insert(names, name)
 	end
 	table.sort(names)
 	return names
-end
-
-local function chooseDefaultPreset(presets)
-	if presets and presets["Purple Night"] then
-		return "Purple Night"
-	end
-	local names = presetNames(presets)
-	return names[1] or ""
 end
 
 function ThemeManager:ApplyPreset(window, name)
@@ -98,16 +89,8 @@ function ThemeManager:ApplyPreset(window, name)
 	end
 end
 
--- helper to safely set a theme key
-local function setThemeKey(window, key, value)
-	if not window then return end
-	local t = clone(window:GetTheme())
-	t[key] = value
-	window:SetTheme(t)
-end
-
 function ThemeManager:BuildThemeMenu(window, tab, side)
-	-- Requires BlueView tab object with AddGroupbox, groupbox AddDropdown/AddColorPicker/AddButton.
+	-- Requires BlueView tab object with AddGroupbox, and groupbox AddDropdown/AddColorPicker.
 	if not window or not tab or not tab.AddGroupbox then
 		return
 	end
@@ -116,55 +99,22 @@ function ThemeManager:BuildThemeMenu(window, tab, side)
 	local gb = tab:AddGroupbox("Theme", { Side = side })
 
 	local names = presetNames(self._presets)
-	local defaultPreset = chooseDefaultPreset(self._presets)
+	local default = names[1] or ""
 
-	-- Preset selector (does NOT force Crimson as default anymore)
-	gb:AddDropdown("Preset", names, defaultPreset ~= "" and defaultPreset or (names[1] or ""), function(name)
+	gb:AddDropdown("Preset", names, default, function(name)
 		self:ApplyPreset(window, name)
 	end)
 
-	-- Apply a sane default once so the UI starts consistent
-	if defaultPreset ~= "" then
-		self:ApplyPreset(window, defaultPreset)
-	end
-
-	-- Full editor (restored)
+	-- Nice extra: Accent picker to override preset accent.
 	gb:AddColorPicker("Accent", window:GetTheme().Accent, function(c)
-		setThemeKey(window, "Accent", c)
-	end)
-	gb:AddColorPicker("BG", window:GetTheme().BG, function(c)
-		setThemeKey(window, "BG", c)
-	end)
-	gb:AddColorPicker("BG2", window:GetTheme().BG2, function(c)
-		setThemeKey(window, "BG2", c)
-	end)
-	gb:AddColorPicker("Panel", window:GetTheme().Panel, function(c)
-		setThemeKey(window, "Panel", c)
-	end)
-	gb:AddColorPicker("Panel2", window:GetTheme().Panel2, function(c)
-		setThemeKey(window, "Panel2", c)
-	end)
-	gb:AddColorPicker("Stroke", window:GetTheme().Stroke, function(c)
-		setThemeKey(window, "Stroke", c)
-	end)
-	gb:AddColorPicker("Text", window:GetTheme().Text, function(c)
-		setThemeKey(window, "Text", c)
-	end)
-	gb:AddColorPicker("SubText", window:GetTheme().SubText, function(c)
-		setThemeKey(window, "SubText", c)
-	end)
-	gb:AddColorPicker("Muted", window:GetTheme().Muted, function(c)
-		setThemeKey(window, "Muted", c)
+		local t = window:GetTheme()
+		t.Accent = c
+		window:SetTheme(t)
 	end)
 
-	-- quick reset button (optional but handy)
-	if gb.AddButton then
-		gb:AddButton("Reset to preset", function()
-			local name = self._currentName or defaultPreset
-			if name and name ~= "" then
-				self:ApplyPreset(window, name)
-			end
-		end)
+	-- Apply default preset immediately so menu matches current theme.
+	if default ~= "" then
+		self:ApplyPreset(window, default)
 	end
 end
 
