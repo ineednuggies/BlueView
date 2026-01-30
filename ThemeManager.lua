@@ -35,6 +35,7 @@ local DEFAULT_PRESETS = {
 		SubText= Color3.fromRGB(160, 180, 205),
 		Muted  = Color3.fromRGB(110, 125, 150),
 	},
+}
 
 function ThemeManager.GetDefaultPresets()
 	local out = {}
