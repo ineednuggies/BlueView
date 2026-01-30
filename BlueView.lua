@@ -68,35 +68,153 @@ local function clamp01(x: number): number
 end
 
 --////////////////////////////////////////////////////////////
--- Icons (Lucide-ready)
+-- Icons (Lucide atlas + rects; Obsidian-style)
 --////////////////////////////////////////////////////////////
-export type IconProvider = (name: string) -> string?
+-- IconProvider can be provided by the user, but BlueView will also auto-resolve
+-- Lucide names via lucide-roblox-direct (spritesheet + ImageRectOffset/Size).
+--
+-- You can pass icons like:
+--   "settings"        (lucide name)
+--   "lucide:settings" (explicit lucide)
+--   123456789         (roblox image id)
+--   "rbxassetid://123456789"
+--
+-- When available, Lucide icons are applied using ImageRectOffset/ImageRectSize.
+export type IconResolved = {
+	image: string,
+	rectOffset: Vector2?,
+	rectSize: Vector2?,
+}
 
-local function resolveIcon(iconProvider: IconProvider?, icon: string?): string?
-	if not icon then return nil end
-	if string.find(icon, "rbxassetid://") == 1 then
-		return icon
+export type IconProvider = (name: string, size: number?) -> (string | IconResolved | nil)
+
+local LUCIDE_SOURCE = "https://raw.githubusercontent.com/deividcomsono/lucide-roblox-direct/refs/heads/main/source.lua"
+local _Lucide: any = nil
+local _LucideTried = false
+
+local function _safeLoadLucide()
+	if _LucideTried then return end
+	_LucideTried = true
+	local ok, mod = pcall(function()
+		return loadstring(game:HttpGet(LUCIDE_SOURCE))()
+	end)
+	if ok then
+		_Lucide = mod
+	else
+		_Lucide = nil
 	end
+end
+
+local function _isDirectAssetString(s: string): boolean
+	return (string.find(s, "rbxassetid://") == 1)
+		or (string.find(s, "http") == 1 and string.find(s, "roblox.com/asset") ~= nil)
+		or (string.find(s, "rbxthumb://") == 1)
+end
+
+local function _normalizeIconData(v: any): IconResolved?
+	if not v then return nil end
+	if typeof(v) == "string" then
+		return { image = v }
+	end
+	if typeof(v) == "table" then
+		local img = v.image or v.Url or v.Image or v.Sheet
+		if typeof(img) ~= "string" then return nil end
+		return {
+			image = img,
+			rectOffset = v.rectOffset or v.ImageRectOffset or v.RectOffset,
+			rectSize = v.rectSize or v.ImageRectSize or v.RectSize,
+		}
+	end
+	return nil
+end
+
+local function _lucideGet(name: string, size: number?): IconResolved?
+	_safeLoadLucide()
+	if not _Lucide then return nil end
+
+	local s = tonumber(size) or 48
+	local data: any = nil
+
+	-- Packs vary; try common getters and shapes.
+	if type(_Lucide.Get) == "function" then
+		local ok, v = pcall(_Lucide.Get, name, s)
+		if ok then data = v end
+	end
+	if not data and type(_Lucide.get) == "function" then
+		local ok, v = pcall(_Lucide.get, name, s)
+		if ok then data = v end
+	end
+	if not data and type(_Lucide.GetIcon) == "function" then
+		local ok, v = pcall(_Lucide.GetIcon, name, s)
+		if ok then data = v end
+	end
+	if not data and type(_Lucide.Icons) == "table" then
+		data = _Lucide.Icons[name]
+	end
+
+	return _normalizeIconData(data)
+end
+
+-- Resolve any icon input to {image, rectOffset, rectSize}
+local function resolveIcon(iconProvider: IconProvider?, icon: any, iconSize: number?): IconResolved?
+	if not icon then return nil end
+
+	-- numeric -> direct image asset
+	if typeof(icon) == "number" then
+		return { image = ("rbxassetid://%d"):format(icon) }
+	end
+
+	if typeof(icon) ~= "string" then
+		return nil
+	end
+
+	-- direct asset string
+	if _isDirectAssetString(icon) then
+		return { image = icon }
+	end
+
+	-- explicit lucide prefix
 	local prefix = "lucide:"
 	if string.find(icon, prefix) == 1 then
 		local key = string.sub(icon, #prefix + 1)
-		return iconProvider and iconProvider(key) or nil
+		local d = _lucideGet(key, iconSize)
+		if d then return d end
+		-- fallback to user provider if they want to map lucide names themselves
+		return iconProvider and _normalizeIconData(iconProvider(key, iconSize)) or nil
 	end
-	return iconProvider and iconProvider(icon) or nil
+
+	-- try user provider first (backwards compatible)
+	if iconProvider then
+		local v = iconProvider(icon, iconSize)
+		local d = _normalizeIconData(v)
+		if d then return d end
+	end
+
+	-- finally, try lucide by raw name
+	return _lucideGet(icon, iconSize)
 end
 
-local function makeIcon(imageId: string?, size: number, transparency: number?)
-	return mk("ImageLabel", {
+local function makeIcon(iconData: IconResolved?, size: number, transparency: number?)
+	local img = mk("ImageLabel", {
 		BackgroundTransparency = 1,
 		Size = UDim2.fromOffset(size, size),
-		Image = imageId or "",
+		Image = (iconData and iconData.image) or "",
 		ImageTransparency = transparency or 0,
 		ScaleType = Enum.ScaleType.Fit,
 	})
+	if iconData and iconData.rectOffset and iconData.rectSize then
+		img.ImageRectOffset = iconData.rectOffset
+		img.ImageRectSize = iconData.rectSize
+	else
+		img.ImageRectOffset = Vector2.new(0, 0)
+		img.ImageRectSize = Vector2.new(0, 0)
+	end
+	return img
 end
 
 --////////////////////////////////////////////////////////////
 -- Theme
+
 --////////////////////////////////////////////////////////////
 export type Theme = {
 	Accent: Color3,
@@ -156,7 +274,7 @@ export type Window = {
 	SetToggleKey: (self: Window, key: Enum.KeyCode) -> (),
 
 	AddCategory: (self: Window, name: string) -> (),
-	AddTab: (self: Window, name: string, icon: string?, category: string?) -> any,
+	AddTab: (self: Window, name: string, icon: any?, iconSizeOrCategory: any?, category2: string?) -> any,
 	SelectTab: (self: Window, name: string, instant: boolean?) -> (),
 
 	SetTheme: (self: Window, theme: Theme) -> (),
@@ -1022,7 +1140,7 @@ function WindowMT:AddCategory(name: string)
 	self:_UpdateSelectedBarDeferred(true)
 end
 
-local function makeSidebarTab(theme: Theme, iconProvider: IconProvider?, name: string, icon: string?)
+local function makeSidebarTab(theme: Theme, iconProvider: IconProvider?, name: string, icon: any, iconSize: number?)
 	local btn = mk("TextButton", {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
@@ -1043,16 +1161,17 @@ local function makeSidebarTab(theme: Theme, iconProvider: IconProvider?, name: s
 
 	mk("UIPadding", {PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), Parent = btn})
 
-	local iconId = resolveIcon(iconProvider, icon)
-	local iconImg = makeIcon(iconId, 18, 0.45)
+	local sz = tonumber(iconSize) or 18
+	local iconData = resolveIcon(iconProvider, icon, sz)
+	local iconImg = makeIcon(iconData, sz, 0.45)
 	iconImg.ZIndex = 3
 	iconImg.Parent = btn
-	iconImg.Position = UDim2.new(0, 10, 0.5, -9)
+	iconImg.Position = UDim2.new(0, 10, 0.5, -(sz/2))
 
 	local label = mk("TextLabel", {
 		BackgroundTransparency = 1,
-		Position = UDim2.new(0, 36, 0, 0),
-		Size = UDim2.new(1, -36, 1, 0),
+		Position = UDim2.new(0, 10 + sz + 8, 0, 0),
+		Size = UDim2.new(1, -(10 + sz + 8), 1, 0),
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Text = name,
 		TextSize = 14,
@@ -1065,13 +1184,22 @@ local function makeSidebarTab(theme: Theme, iconProvider: IconProvider?, name: s
 	return btn, bg, label, iconImg
 end
 
-function WindowMT:AddTab(name: string, icon: string?, category: string?)
+function WindowMT:AddTab(name: string, icon: any, iconSizeOrCategory: any?, category2: string?)
+	local iconSize: number? = nil
+	local category: string? = category2
+
+	if typeof(iconSizeOrCategory) == "number" then
+		iconSize = iconSizeOrCategory
+	elseif typeof(iconSizeOrCategory) == "string" then
+		category = iconSizeOrCategory
+	end
+
 	if category and category ~= "" then
 		self:AddCategory(category)
 	end
 
 	local theme: Theme = self.Theme
-	local btn, bg, label, iconImg = makeSidebarTab(theme, self.IconProvider, name, icon)
+	local btn, bg, label, iconImg = makeSidebarTab(theme, self.IconProvider, name, icon, iconSize)
 
 	self._layoutCounter += 1
 	btn.LayoutOrder = self._layoutCounter
@@ -1256,16 +1384,14 @@ local function makeGroupbox(theme: Theme, iconProvider: IconProvider?, title: st
 		Parent = header,
 	})
 
-	local chevronDown = resolveIcon(iconProvider, "lucide:chevron-down")
-	local chevronRight = resolveIcon(iconProvider, "lucide:chevron-right")
+	local chevronDown = resolveIcon(iconProvider, "lucide:chevron-down", 18)
+	local chevronRight = resolveIcon(iconProvider, "lucide:chevron-right", 18)
 
-	local icon = mk("ImageLabel", {
-		BackgroundTransparency = 1,
-		Size = UDim2.fromScale(1, 1),
-		Image = chevronDown or "",
-		ImageTransparency = 0.15,
-		Parent = collapseBtn,
-	})
+	local icon = makeIcon(chevronDown, 18, 0.15)
+	icon.AnchorPoint = Vector2.new(0.5, 0.5)
+	icon.Position = UDim2.fromScale(0.5, 0.5)
+	icon.ZIndex = 21
+	icon.Parent = collapseBtn
 
 	local fallback = mk("TextLabel", {
 		BackgroundTransparency = 1,
@@ -1339,7 +1465,16 @@ function TabMT:AddGroupbox(title: string, opts: {Side: ("Left"|"Right")?, Initia
 	local HEADER_H = 26
 	local function setIconCollapsed(state: boolean)
 		if chevronDown then
-			icon.Image = state and (chevronRight or chevronDown) or chevronDown
+			local d = (state and chevronRight) or chevronDown
+			if not d then d = chevronDown end
+			icon.Image = d.image
+			if d.rectOffset and d.rectSize then
+				icon.ImageRectOffset = d.rectOffset
+				icon.ImageRectSize = d.rectSize
+			else
+				icon.ImageRectOffset = Vector2.new(0, 0)
+				icon.ImageRectSize = Vector2.new(0, 0)
+			end
 		else
 			fallback.Text = state and ">" or "v"
 		end
@@ -1675,9 +1810,30 @@ end
 --////////////////////////////////////////////////////////////
 -- Button (no glow) + slightly narrower X padding
 --////////////////////////////////////////////////////////////
-function GroupMT:AddButton(text: string, callback: (() -> ())?)
+function GroupMT:AddButton(text: string, iconOrCb: any?, iconSizeOrCb: any?, callback: (() -> ())?)
+	-- Supports:
+	--   AddButton("Name", function() end)                       -- old
+	--   AddButton("Name", "settings", 18, function() end)       -- lucide
+	--   AddButton("Name", 123456789, 18, function() end)        -- direct asset id
+	--   AddButton("Name", "rbxassetid://...", 18, function() end)
+
 	local theme: Theme = self._tab._window.Theme
 	local window: any = self._tab._window
+
+	local icon: any = nil
+	local iconSize: number? = nil
+	local cb: (() -> ())? = nil
+
+	if typeof(iconOrCb) == "function" then
+		cb = iconOrCb
+	elseif typeof(iconSizeOrCb) == "function" then
+		icon = iconOrCb
+		cb = iconSizeOrCb
+	else
+		icon = iconOrCb
+		iconSize = iconSizeOrCb
+		cb = callback
+	end
 
 	local row = makeRow(42)
 	row.Parent = self._content
@@ -1687,10 +1843,7 @@ function GroupMT:AddButton(text: string, callback: (() -> ())?)
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, -6, 1, 0), -- slightly less wide
 		Position = UDim2.new(0, 3, 0, 0),
-		Text = text,
-		TextSize = 14,
-		Font = Enum.Font.GothamSemibold,
-		TextColor3 = theme.Text,
+		Text = "",
 		AutoButtonColor = false,
 		ZIndex = 20,
 		Parent = row,
@@ -1699,8 +1852,38 @@ function GroupMT:AddButton(text: string, callback: (() -> ())?)
 	withUIStroke(btn, theme.Stroke, 0.35, 1)
 
 	window:_BindTheme(btn, "BackgroundColor3", "Panel2")
-	window:_BindTheme(btn, "TextColor3", "Text")
 	window:_BindTheme((btn:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
+
+	-- Icon + label
+	local sz = tonumber(iconSize) or 18
+	local iconData = resolveIcon(window.IconProvider, icon, sz)
+	local hasIcon = (iconData ~= nil)
+
+	local iconImg = makeIcon(iconData, sz, 0.10)
+	iconImg.Visible = hasIcon
+	iconImg.ZIndex = 21
+	iconImg.Parent = btn
+	iconImg.Position = UDim2.new(0, 12, 0.5, -(sz/2))
+
+	local labelX = 12 + (hasIcon and (sz + 8) or 0)
+
+	local label = mk("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, labelX, 0, 0),
+		Size = UDim2.new(1, -labelX, 1, 0),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = text,
+		TextSize = 14,
+		Font = Enum.Font.GothamSemibold,
+		TextColor3 = theme.Text,
+		ZIndex = 21,
+		Parent = btn,
+	})
+	window:_BindTheme(label, "TextColor3", "Text")
+	if hasIcon then
+		iconImg.ImageColor3 = theme.Text
+		window:_BindTheme(iconImg, "ImageColor3", "Text")
+	end
 
 	btn.MouseEnter:Connect(function()
 		tween(btn, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = theme.Panel})
@@ -1709,11 +1892,12 @@ function GroupMT:AddButton(text: string, callback: (() -> ())?)
 		tween(btn, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = theme.Panel2})
 	end)
 	btn.MouseButton1Click:Connect(function()
-		if callback then task.spawn(callback) end
+		if cb then task.spawn(cb) end
 	end)
 
 	return btn
 end
+
 
 --////////////////////////////////////////////////////////////
 -- Dropdowns (inline under control, centered to button)
