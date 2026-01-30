@@ -113,6 +113,9 @@ end
 
 local function _normalizeIconData(v: any): IconResolved?
 	if not v then return nil end
+	if typeof(v) == "number" then
+		return { image = ("rbxassetid://%d"):format(v) }
+	end
 	if typeof(v) == "string" then
 		return { image = v }
 	end
@@ -136,6 +139,32 @@ local function _lucideGet(name: string, size: number?): IconResolved?
 	local data: any = nil
 
 	-- Packs vary; try common getters and shapes.
+-- If this pack uses GetAsset (asset-id style), prefer it.
+if type(_Lucide.GetAsset) == "function" then
+	local ok, asset = pcall(_Lucide.GetAsset, name, s)
+	if ok and asset then
+		if typeof(asset) == "number" then
+			data = { image = ("rbxassetid://%d"):format(asset) }
+		elseif typeof(asset) == "string" then
+			-- sometimes returns "rbxassetid://..."
+			data = asset
+		elseif typeof(asset) == "table" then
+			-- common: {Id=number} or {id=number} or {Image="rbxassetid://..."}
+			local id = asset.Id or asset.id
+			if typeof(id) == "number" then
+				data = { image = ("rbxassetid://%d"):format(id) }
+			elseif typeof(asset.Image) == "string" then
+				data = asset.Image
+			elseif typeof(asset.image) == "string" then
+				data = asset.image
+			end
+		end
+	end
+end
+if data then
+	return _normalizeIconData(data)
+end
+
 	if type(_Lucide.Get) == "function" then
 		local ok, v = pcall(_Lucide.Get, name, s)
 		if ok then data = v end
@@ -443,6 +472,22 @@ local root = mk("Frame", {
 	})
 	withUICorner(appIcon, 8)
 	withUIStroke(appIcon, theme.Stroke, 0.35, 1)
+-- App icon (logo): supports lucide name / asset id / rbxassetid string
+local logoSize = tonumber(options.LogoIconSize) or 18
+local logoIcon = options.LogoIcon -- can be nil to fall back to "B"
+local logoData = nil
+if logoIcon ~= nil then
+	logoData = resolveIcon(iconProvider, logoIcon, logoSize)
+end
+
+if logoData then
+	local img = makeIcon(logoData, logoSize, 0)
+	img.AnchorPoint = Vector2.new(0.5, 0.5)
+	img.Position = UDim2.fromScale(0.5, 0.5)
+	img.ImageColor3 = theme.Accent
+	img.ZIndex = 13
+	img.Parent = appIcon
+else
 	mk("TextLabel", {
 		BackgroundTransparency = 1,
 		Size = UDim2.fromScale(1, 1),
@@ -453,6 +498,7 @@ local root = mk("Frame", {
 		ZIndex = 13,
 		Parent = appIcon,
 	})
+end
 
 	local titleLabel = mk("TextLabel", {
 		BackgroundTransparency = 1,
