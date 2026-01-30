@@ -1848,16 +1848,24 @@ function GroupMT:AddButton(text: string, iconOrCb: any?, iconSizeOrCb: any?, cal
 	local iconSize: number? = nil
 	local cb: (() -> ())? = nil
 
-	if typeof(iconOrCb) == "function" then
-		cb = iconOrCb
-	elseif typeof(iconSizeOrCb) == "function" then
-		icon = iconOrCb
-		cb = iconSizeOrCb
-	else
-		icon = iconOrCb
-		iconSize = iconSizeOrCb
-		cb = callback
+-- Robust arg parsing (keeps backwards compatibility with weird 3-arg patterns)
+-- We pick:
+--   cb = first function in (iconOrCb, iconSizeOrCb, callback)
+--   icon = first non-function (string/number) in those args
+--   iconSize = first number in those args (if present)
+local args = { iconOrCb, iconSizeOrCb, callback }
+for _, a in ipairs(args) do
+	if not cb and typeof(a) == "function" then
+		cb = a
 	end
+	if not iconSize and typeof(a) == "number" then
+		iconSize = a
+	end
+	if not icon and (typeof(a) == "string" or typeof(a) == "number") then
+		-- If this is actually a "flag"/misc string from older code, it will just fail to resolve and icon hides.
+		icon = a
+	end
+end
 
 	local row = makeRow(42)
 	row.Parent = self._content
