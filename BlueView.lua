@@ -1693,6 +1693,30 @@ function GroupMT:AddSlider(text: string, min: number, max: number, default: numb
 	local window: any = self._tab._window
 	step = step or 1
 	local value = math.clamp(default or min, min, max)
+-- Format the displayed value based on step (restores old "decimal moves" behavior)
+local function _decimalsFromStep(s: number): number
+	-- Convert to string and infer decimal precision
+	local sStr = tostring(s)
+	if sStr:find("e") or sStr:find("E") then
+		sStr = string.format("%.10f", s)
+	end
+	-- trim trailing zeros
+	sStr = sStr:gsub("0+$", "")
+	local dot = sStr:find("%.")
+	if not dot then return 0 end
+	local dec = #sStr - dot
+	if dec < 0 then dec = 0 end
+	if dec > 6 then dec = 6 end
+	return dec
+end
+local _decimals = _decimalsFromStep(step :: number)
+local function formatValue(v: number): string
+	if _decimals <= 0 then
+		return string.format("%.0f", v)
+	end
+	return string.format("%." .. tostring(_decimals) .. "f", v)
+end
+
 
 	local row = makeRow(52)
 	row.Parent = self._content
@@ -1715,7 +1739,7 @@ function GroupMT:AddSlider(text: string, min: number, max: number, default: numb
 		Position = UDim2.new(1, 0, 0, 0),
 		Size = UDim2.new(0, 70, 0, 18),
 		TextXAlignment = Enum.TextXAlignment.Right,
-		Text = string.format("%.3f", value),
+		Text = formatValue(value),
 		TextSize = 13,
 		Font = Enum.Font.Gotham,
 		TextColor3 = theme.SubText,
@@ -1762,7 +1786,7 @@ function GroupMT:AddSlider(text: string, min: number, max: number, default: numb
 		local steps = math.floor((v - min) / step + 0.5)
 		v = math.clamp(min + steps * step, min, max)
 		value = v
-		valLabel.Text = string.format("%.3f", value)
+		valLabel.Text = formatValue(value)
 
 		local a = clamp01((value - min) / (max - min))
 		fill.Size = UDim2.new(a, 0, 1, 0)
