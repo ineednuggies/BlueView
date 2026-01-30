@@ -1796,6 +1796,42 @@ end
 	end
 	apply(value, false)
 
+-- Mouse wheel support: when hovering the slider, wheel adjusts by 'step' instead of scrolling the page.
+local function findScrollFrame(obj: Instance): ScrollingFrame?
+	local p: Instance? = obj
+	while p do
+		if p:IsA("ScrollingFrame") then
+			return p :: any
+		end
+		p = p.Parent
+	end
+	return nil
+end
+
+local scrollFrame = findScrollFrame(row)
+local hovering = false
+
+local function setHover(on: boolean)
+	hovering = on
+	if scrollFrame then
+		scrollFrame.ScrollingEnabled = not on
+	end
+end
+
+bar.MouseEnter:Connect(function() setHover(true) end)
+bar.MouseLeave:Connect(function() setHover(false) end)
+thumb.MouseEnter:Connect(function() setHover(true) end)
+thumb.MouseLeave:Connect(function() setHover(false) end)
+
+UserInputService.InputChanged:Connect(function(input, _gp)
+	if not hovering then return end
+	if input.UserInputType == Enum.UserInputType.MouseWheel then
+		local dir = (input.Position.Z > 0) and 1 or -1
+		apply(value + (step * dir), true)
+	end
+end)
+
+
 	local dragging = false
 	local function setFromX(x: number)
 		local absPos = bar.AbsolutePosition.X
