@@ -88,7 +88,7 @@ export type IconResolved = {
 
 export type IconProvider = (name: string, size: number?) -> (string | IconResolved | nil)
 
-local LUCIDE_SOURCE = "https://raw.githubusercontent.com/deividcomsono/lucide-roblox-direct/refs/heads/main/source.lua"
+local LUCIDE_SOURCE = "https://github.com/latte-soft/lucide-roblox/releases/latest/download/lucide-roblox.luau"
 local _Lucide: any = nil
 local _LucideTried = false
 
@@ -139,31 +139,27 @@ local function _lucideGet(name: string, size: number?): IconResolved?
 	local data: any = nil
 
 	-- Packs vary; try common getters and shapes.
--- If this pack uses GetAsset (asset-id style), prefer it.
-if type(_Lucide.GetAsset) == "function" then
-	local ok, asset = pcall(_Lucide.GetAsset, name, s)
-	if ok and asset then
-		if typeof(asset) == "number" then
-			data = { image = ("rbxassetid://%d"):format(asset) }
-		elseif typeof(asset) == "string" then
-			-- sometimes returns "rbxassetid://..."
-			data = asset
-		elseif typeof(asset) == "table" then
-			-- common: {Id=number} or {id=number} or {Image="rbxassetid://..."}
-			local id = asset.Id or asset.id
-			if typeof(id) == "number" then
-				data = { image = ("rbxassetid://%d"):format(id) }
-			elseif typeof(asset.Image) == "string" then
-				data = asset.Image
-			elseif typeof(asset.image) == "string" then
-				data = asset.image
+	-- If this pack uses GetAsset (latte-soft / lucide-roblox style), prefer it.
+	if type(_Lucide.GetAsset) == "function" then
+		local ok, asset = pcall(_Lucide.GetAsset, name, s)
+		if ok and asset then
+			if typeof(asset) == "number" then
+				data = asset
+			elseif typeof(asset) == "string" then
+				data = asset
+			elseif typeof(asset) == "table" then
+				local id = asset.Id or asset.id
+				if typeof(id) == "number" then
+					data = id
+				else
+					data = asset
+				end
 			end
 		end
 	end
-end
-if data then
-	return _normalizeIconData(data)
-end
+	if data then
+		return _normalizeIconData(data)
+	end
 
 	if type(_Lucide.Get) == "function" then
 		local ok, v = pcall(_Lucide.Get, name, s)
@@ -472,22 +468,6 @@ local root = mk("Frame", {
 	})
 	withUICorner(appIcon, 8)
 	withUIStroke(appIcon, theme.Stroke, 0.35, 1)
--- App icon (logo): supports lucide name / asset id / rbxassetid string
-local logoSize = tonumber(options.LogoIconSize) or 18
-local logoIcon = options.LogoIcon -- can be nil to fall back to "B"
-local logoData = nil
-if logoIcon ~= nil then
-	logoData = resolveIcon(iconProvider, logoIcon, logoSize)
-end
-
-if logoData then
-	local img = makeIcon(logoData, logoSize, 0)
-	img.AnchorPoint = Vector2.new(0.5, 0.5)
-	img.Position = UDim2.fromScale(0.5, 0.5)
-	img.ImageColor3 = theme.Accent
-	img.ZIndex = 13
-	img.Parent = appIcon
-else
 	mk("TextLabel", {
 		BackgroundTransparency = 1,
 		Size = UDim2.fromScale(1, 1),
@@ -498,7 +478,6 @@ else
 		ZIndex = 13,
 		Parent = appIcon,
 	})
-end
 
 	local titleLabel = mk("TextLabel", {
 		BackgroundTransparency = 1,
