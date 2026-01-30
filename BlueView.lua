@@ -88,21 +88,37 @@ export type IconResolved = {
 
 export type IconProvider = (name: string, size: number?) -> (string | IconResolved | nil)
 
-local LUCIDE_SOURCE = "https://github.com/latte-soft/lucide-roblox/releases/latest/download/lucide-roblox.luau"
+local LUCIDE_SOURCES = {
+	"https://raw.githubusercontent.com/deividcomsono/lucide-roblox-direct/refs/heads/main/source.lua",
+	"https://raw.githubusercontent.com/deividcomsono/lucide-roblox-direct/main/source.lua",
+	"https://cdn.jsdelivr.net/gh/deividcomsono/lucide-roblox-direct@main/source.lua",
+}
 local _Lucide: any = nil
 local _LucideTried = false
+local _LucideLoadError: any = nil
+
 
 local function _safeLoadLucide()
 	if _LucideTried then return end
 	_LucideTried = true
-	local ok, mod = pcall(function()
-		return loadstring(game:HttpGet(LUCIDE_SOURCE))()
-	end)
-	if ok then
-		_Lucide = mod
-	else
-		_Lucide = nil
+
+	local lastErr: any = nil
+	for _, url in ipairs(LUCIDE_SOURCES) do
+		local ok, modOrErr = pcall(function()
+			local src = game:HttpGet(url)
+			local fn = loadstring(src)
+			return fn()
+		end)
+		if ok and modOrErr then
+			_Lucide = modOrErr
+			_LucideLoadError = nil
+			return
+		end
+		lastErr = modOrErr
 	end
+
+	_Lucide = nil
+	_LucideLoadError = lastErr
 end
 
 local function _isDirectAssetString(s: string): boolean
@@ -113,9 +129,6 @@ end
 
 local function _normalizeIconData(v: any): IconResolved?
 	if not v then return nil end
-	if typeof(v) == "number" then
-		return { image = ("rbxassetid://%d"):format(v) }
-	end
 	if typeof(v) == "string" then
 		return { image = v }
 	end
@@ -131,6 +144,39 @@ local function _normalizeIconData(v: any): IconResolved?
 	return nil
 end
 
+local function _isValidCustomIcon(icon: any): boolean
+	return typeof(icon) == "string"
+		and ((string.find(icon, "rbxasset") == 1)
+			or (string.find(icon, "http") == 1 and string.find(icon, "roblox.com/asset") ~= nil)
+			or (string.find(icon, "rbxthumb://") == 1))
+end
+
+function UILib:GetIcon(iconName: string)
+	_safeLoadLucide()
+	if not _Lucide or type(_Lucide.GetAsset) ~= "function" then return nil end
+	local ok, icon = pcall(_Lucide.GetAsset, iconName)
+	if ok then return icon end
+	return nil
+end
+
+function UILib:GetCustomIcon(iconName: any)
+	if _isValidCustomIcon(iconName) then
+		return { Url = iconName, ImageRectOffset = Vector2.new(0, 0), ImageRectSize = Vector2.new(0, 0), Custom = true }
+	end
+	return self:GetIcon(tostring(iconName))
+end
+
+function UILib:SetIconModule(module: any)
+	_Lucide = module
+	_LucideTried = true
+	_LucideLoadError = nil
+end
+
+function UILib:GetIconStatus()
+	_safeLoadLucide()
+	return (_Lucide ~= nil), _LucideLoadError
+end
+
 local function _lucideGet(name: string, size: number?): IconResolved?
 	_safeLoadLucide()
 	if not _Lucide then return nil end
@@ -139,28 +185,6 @@ local function _lucideGet(name: string, size: number?): IconResolved?
 	local data: any = nil
 
 	-- Packs vary; try common getters and shapes.
-	-- If this pack uses GetAsset (latte-soft / lucide-roblox style), prefer it.
-	if type(_Lucide.GetAsset) == "function" then
-		local ok, asset = pcall(_Lucide.GetAsset, name, s)
-		if ok and asset then
-			if typeof(asset) == "number" then
-				data = asset
-			elseif typeof(asset) == "string" then
-				data = asset
-			elseif typeof(asset) == "table" then
-				local id = asset.Id or asset.id
-				if typeof(id) == "number" then
-					data = id
-				else
-					data = asset
-				end
-			end
-		end
-	end
-	if data then
-		return _normalizeIconData(data)
-	end
-
 	if type(_Lucide.Get) == "function" then
 		local ok, v = pcall(_Lucide.Get, name, s)
 		if ok then data = v end
