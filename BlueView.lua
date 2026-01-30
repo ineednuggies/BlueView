@@ -1739,7 +1739,7 @@ end
 		Position = UDim2.new(1, 0, 0, 0),
 		Size = UDim2.new(0, 70, 0, 18),
 		TextXAlignment = Enum.TextXAlignment.Right,
-		Text = formatValue(value),
+		Text = string.format("%.3f", value),
 		TextSize = 13,
 		Font = Enum.Font.Gotham,
 		TextColor3 = theme.SubText,
@@ -1786,7 +1786,7 @@ end
 		local steps = math.floor((v - min) / step + 0.5)
 		v = math.clamp(min + steps * step, min, max)
 		value = v
-		valLabel.Text = formatValue(value)
+		valLabel.Text = string.format("%.3f", value)
 
 		local a = clamp01((value - min) / (max - min))
 		fill.Size = UDim2.new(a, 0, 1, 0)
