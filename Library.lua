@@ -332,6 +332,15 @@ export type Window = {
 local WindowMT = {}
 WindowMT.__index = WindowMT
 
+
+
+local CategoryMT = {}
+CategoryMT.__index = CategoryMT
+
+function CategoryMT:AddTab(name: string, icon: any, iconSize: number?)
+	return self.Window:AddTab(name, icon, iconSize, self.Name)
+end
+
 local TabMT = {}
 TabMT.__index = TabMT
 
@@ -1199,6 +1208,14 @@ function WindowMT:AddCategory(name: string)
 	})
 
 	self:_UpdateSelectedBarDeferred(true)
+
+
+self._categoryInfo = self._categoryInfo or {}
+self._categoryInfo[name] = self._categoryInfo[name] or {}
+self._categoryInfo[name].lastOrder = self._layoutCounter
+
+return setmetatable({ Name = name, Window = self }, CategoryMT)
+
 end
 
 local function makeSidebarTab(theme: Theme, iconProvider: IconProvider?, name: string, icon: any, iconSize: number?)
@@ -1262,9 +1279,38 @@ function WindowMT:AddTab(name: string, icon: any, iconSizeOrCategory: any?, cate
 	local theme: Theme = self.Theme
 	local btn, bg, label, iconImg = makeSidebarTab(theme, self.IconProvider, name, icon, iconSize)
 
+local insertOrder: number? = nil
+if category and category ~= "" then
+	self._categoryInfo = self._categoryInfo or {}
+	local info = self._categoryInfo[category]
+	if info and type(info.lastOrder) == "number" then
+		insertOrder = info.lastOrder + 1
+
+		for _, child in ipairs(self._ui.tabButtons:GetChildren()) do
+			local lo = child.LayoutOrder
+			if typeof(lo) == "number" and lo >= insertOrder then
+				child.LayoutOrder = lo + 1
+			end
+		end
+
+		for _, ci in pairs(self._categoryInfo) do
+			if type(ci.lastOrder) == "number" and ci.lastOrder >= insertOrder then
+				ci.lastOrder = ci.lastOrder + 1
+			end
+		end
+
+		info.lastOrder = insertOrder
+		self._layoutCounter += 1
+	end
+end
+
+if not insertOrder then
 	self._layoutCounter += 1
-	btn.LayoutOrder = self._layoutCounter
-	btn.Parent = self._ui.tabButtons
+	insertOrder = self._layoutCounter
+end
+
+btn.LayoutOrder = insertOrder
+btn.Parent = self._ui.tabButtons
 
 	local page = mk("Frame", {
 		Name = "Tab_" .. name,
