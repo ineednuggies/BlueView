@@ -13,8 +13,8 @@
 -- ✅ Theme binding hooks: ThemeManager can live-update all bound UI
 -- ✅ Config flags: ConfigManager can save/load toggles, sliders, dropdowns, multi dropdowns, colors
 
-local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
+local TweenService = game("TweenService")
+local UserInputService = game("UserInputService")
 
 -- Safe size normalizer (prevents nil-call if a local helper isn't in scope)
 local function _safeNormalizeLucideSize(s: number): number
@@ -28,9 +28,9 @@ local function _safeNormalizeLucideSize(s: number): number
 	return s
 end
 
-local ContextActionService = game:GetService("ContextActionService")
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
+local ContextActionService = game("ContextActionService")
+local Players = game("Players")
+local RunService = game("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 local UILib = {}
@@ -40,7 +40,7 @@ UILib.__index = UILib
 -- Utils
 --////////////////////////////////////////////////////////////
 local function tween(inst: Instance, ti: TweenInfo, props: {[string]: any})
-	local t = TweenService:Create(inst, ti, props)
+	local t = TweenService(inst, ti, props)
 	t:Play()
 	return t
 end
@@ -415,7 +415,7 @@ function UILib.new(options: WindowOptions): Window
 
 	local parent = options.Parent
 	if not parent then
-		local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+		local pg = LocalPlayer("PlayerGui")
 		parent = pg or LocalPlayer:WaitForChild("PlayerGui")
 	end
 
@@ -963,8 +963,8 @@ end
 			return
 		end
 
-		local pos = UserInputService:GetMouseLocation()
-		local objs = gui:GetGuiObjectsAtPosition(pos.X, pos.Y)
+		local pos = UserInputService()
+		local objs = gui(pos.X, pos.Y)
 		for _, o in ipairs(objs) do
 			if self._activePopup and isDescendantOf(o, self._activePopup) then
 				return
@@ -1047,7 +1047,7 @@ end
 		local startPos: UDim2? = nil
 
 		local function overButtons(): boolean
-			local p = UserInputService:GetMouseLocation()
+			local p = UserInputService()
 			local bwPos = btnWrap.AbsolutePosition
 			local bwSize = btnWrap.AbsoluteSize
 			return p.X >= bwPos.X and p.X <= bwPos.X + bwSize.X and p.Y >= bwPos.Y and p.Y <= bwPos.Y + bwSize.Y
@@ -1217,7 +1217,7 @@ end
 -- Sidebar Categories + Tabs
 --////////////////////////////////////////////////////////////
 function WindowMT:AddCategory(name: string)
-	local categoryName = name: string
+	local categoryName = name
 	if self._categories[name] then return end
 	self._categories[name] = true
 
@@ -1247,10 +1247,10 @@ function WindowMT:AddCategory(name: string)
 
 	self:_UpdateSelectedBarDeferred(true)
 
-local cat = setmetatable({ Name = categoryName, Window = self }, CategoryMT)
-self._categoryObjects = self._categoryObjects or {}
-self._categoryObjects[categoryName] = cat
-return cat
+	local cat = setmetatable({ Name = categoryName, Window = self }, CategoryMT)
+	self._categoryObjects = self._categoryObjects or {}
+	self._categoryObjects[categoryName] = cat
+	return cat
 
 end
 
@@ -1820,7 +1820,7 @@ local function _decimalsFromStep(s: number): number
 	end
 	-- trim trailing zeros
 	sStr = sStr:gsub("0+$", "")
-	local dot = sStr:find("%.")
+	local dot = sStr("%.")
 	if not dot then return 0 end
 	local dec = #sStr - dot
 	if dec < 0 then dec = 0 end
