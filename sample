@@ -1,0 +1,123 @@
+local REPO_USER = "ineednuggies"
+local REPO_NAME = "BlueView"
+local BRANCH    = "main"
+local BASE = ("https://raw.githubusercontent.com/%s/%s/%s/"):format(REPO_USER, REPO_NAME, BRANCH)
+
+local function load(name: string)
+	return loadstring(game:HttpGet(BASE .. name))()
+end
+
+local Library = load("BlueView.lua")
+local ThemeManager = load("ThemeManager.lua") --optional chuds
+
+local Window = Library.new({
+	Title = "BlueView Sample",
+	LogoIcon = "badge-check",
+	LogoIconSize = 24,
+
+	AutoScale = true,            
+	UnlockMouseOnOpen = true,    
+	ToggleKey = Enum.KeyCode.RightShift,
+	MinimizeKey = Enum.KeyCode.RightControl,
+
+	-- If you want the UI to hard-stop when closed:
+	KillOnClose = false,
+	OnKill = function()
+		warn("BlueView killed")
+	end,
+
+	-- Theme override (optional). If omitted it uses defaults inside BlueView.
+	-- Theme = { ... },
+})
+
+
+--//////////////////////////////////////////////////////////////////////////////
+-- Categories + Tabs (NEW icon signature)
+--   AddTab(name, icon, iconSize)
+-- Backwards compatible:
+--   AddTab(name, icon, categoryName)
+-- and you can do both:
+--   AddTab(name, icon, iconSize, categoryName)
+--//////////////////////////////////////////////////////////////////////////////
+
+Window:AddCategory("Main")
+Window:AddCategory("Settings")
+
+local TabMain = Window:AddTab("Main", "house", 24, "Main")
+local TabFarm = Window:AddTab("Farm", "pickaxe", 24, "Main")
+local TabUI   = Window:AddTab("UI Settings", "settings", 24, "Settings")
+
+local TM = nil
+pcall(function()
+	if ThemeManager and type(ThemeManager.new) == "function" then
+		TM = ThemeManager.new()
+		TM:BuildThemeMenu(Window, TabUI, "Left")
+	end
+end)
+
+
+-- If you want to programmatically select a tab:
+-- Window:SelectTab(TabMain)
+
+local MainLeft  = TabMain:AddGroupbox("Combat", {Side="Left"})
+local MainRight = TabMain:AddGroupbox("Movement", {Side="Right"})
+
+local FarmLeft  = TabFarm:AddGroupbox("Ore Nodes", {Side="Left"})
+
+
+--   AddToggle(text, default?, callback?, flag?)
+
+MainLeft:AddToggle("Kill Aura", false, function(on)
+	print("Kill Aura:", on)
+end, "killaura")
+
+MainLeft:AddToggle("Silent Aim", false, function(on)
+	print("Silent Aim:", on)
+end, "silentaim")
+
+
+--   AddSlider(text, min, max, default?, step?, callback?, flag?)
+
+MainRight:AddSlider("WalkSpeed", 8, 28, 16, 1, function(v)
+	print("WalkSpeed:", v)
+	-- (example) game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = v
+end, "walkspeed")
+
+MainRight:AddSlider("FOV", 60, 120, 90, 0.1, function(v)
+	print("FOV:", v)
+end, "fov")
+
+
+-- Buttons (NEW icon signature)
+--   AddButton(text, callback)                               -- old
+--   AddButton(text, icon, iconSize, callback)               -- new
+--   AddButton(text, icon, callback)                         -- new (no size)
+
+MainLeft:AddButton("Panic / Disable", "shield-off", 18, function()
+	print("PANIC clicked")
+end)
+
+MainLeft:AddButton("Teleport To Spawn", "map-pin", 18, function()
+	print("Teleport!")
+end)
+
+
+
+--   AddDropdown(text, items, default?, callback?, flag?)
+
+FarmLeft:AddDropdown("Pickaxe Tier", {"Wood", "Stone", "Iron", "Diamond"}, "Stone", function(choice)
+	print("Pickaxe:", choice)
+end, "pickaxeTier")
+
+
+-- multi select dropdowns
+--   AddMultiDropdown(text, items, default?, callback?, flag?)
+FarmLeft:AddMultiDropdown("Auto Farm Targets", {"Copper", "Iron", "Gold", "Crystal"}, {"Iron"}, function(list)
+	print("Targets:", table.concat(list, ", "))
+end, "farmTargets")
+
+
+-- Window helpers / keys
+
+Window:SetToggleKey(Enum.KeyCode.RightShift)
+Window:SetMinimizeKey(Enum.KeyCode.RightControl) -- pretty much same thing as the toggle key, 
