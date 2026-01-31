@@ -1,3 +1,18 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local ContextActionService = game:GetService("ContextActionService")
@@ -52,11 +67,6 @@ local function clamp01(x)
 	return x
 end
 
-
-
-
-export type IconProvider = (name: string) -> string
-
 local function resolveIcon(iconProvider, icon)
 	if not icon then return nil end
 	if string.find(icon, "rbxassetid://") == 1 then
@@ -80,19 +90,6 @@ local function makeIcon(imageId, size, transparency)
 	})
 end
 
-
-
-
-export type Theme = {
-	Accent: Color3,
-	BG: Color3,
-	BG2: Color3,
-	Panel: Color3,
-	Panel2: Color3,
-	Stroke: Color3,
-	Text: Color3,
-	SubText: Color3,
-	Muted: Color3,
 }
 
 local DefaultTheme= {
@@ -107,49 +104,8 @@ local DefaultTheme= {
 	Muted  = Color3.fromRGB(115, 120, 150),
 }
 
-
-
-
-export type WindowOptions = {
-	Title: string,
-	MinimizeKey: Enum.KeyCode,
-	UnlockMouseOnOpen: boolean,
-	Width: number,
-	Height: number,
-	Parent: Instance,
-	ToggleKey: Enum.KeyCode,
-	Theme: Theme,
-	IconProvider: IconProvider,
-	KillOnClose: boolean,
-	OnKill: (() -> ()),
-
-	AutoScale: boolean,
-	MinScale: number,
-	MaxScale: number,
-	MinSize: Vector2,
-	MaxSize: Vector2,
 }
 
-export type Window = {
-	Gui: ScreenGui,
-	Root: Frame,
-	IsKilled: boolean,
-
-	Destroy: (self: Window) -> (),
-	Toggle: (self: Window, state: boolean) -> (),
-	SetKillCallback: (self: Window, killOnClose: boolean, onKill: (() -> ())) -> (),
-	SetToggleKey: (self: Window, key: Enum.KeyCode) -> (),
-
-	AddCategory: (self: Window, name: string) -> (),
-	AddTab: (self: Window, name: string, icon: string, category: string) -> any,
-	SelectTab: (self: Window, name: string, instant: boolean) -> (),
-
-	SetTheme: (self: Window, theme: Theme) -> (),
-	GetTheme: (self: Window) -> Theme,
-
-	RegisterFlag: (self: Window, flag: string, getter: () -> any, setter: (any) -> ()) -> (),
-	CollectConfig: (self: Window) -> {[string]: any},
-	ApplyConfig: (self: Window, data: {[string]: any}) -> (),
 }
 
 local WindowMT = {}
@@ -896,7 +852,7 @@ end
 end
 
 function WindowMT:SetToggleKey(key) self._toggleKey = key end
-function WindowMT:SetKillCallback(killOnClose, onKill) -> ()))
+function WindowMT:SetKillCallback(killOnClose, onKill)
 	self._killOnClose = killOnClose
 	self._onKill = onKill
 end
@@ -941,14 +897,14 @@ function WindowMT:GetTheme()
 	return self.Theme
 end
 
-function WindowMT:OnThemeChanged(fn) -> ())
+function WindowMT:OnThemeChanged(fn)
 	table.insert(self._themeWatchers, fn)
 end
 
-function WindowMT:RegisterFlag(flag, getter) -> any, setter: (any) -> ())
+function WindowMT:RegisterFlag(flag, getter) setter: (any)
 	self._flags[flag] = {get = getter, set = setter}
 end
-function WindowMT:CollectConfig()
+function WindowMT:CollectConfig() any}
 	local out= {}
 	for k, v in pairs(self._flags) do
 		local ok, value = pcall(v.get)
@@ -1437,7 +1393,7 @@ local function addRadialGlowSimple(host, color, pad, alpha)
 	return setIntensity, setColor
 end
 
-function GroupMT:AddToggle(text, default, callback) -> ()), flag: string)
+function GroupMT:AddToggle(text, default, callback) flag: string)
 	local theme= self._tab._window.Theme
 	local window= self._tab._window
 	local on = default == true
@@ -1530,7 +1486,7 @@ end
 
 
 
-function GroupMT:AddSlider(text, min, max, default, step, callback) -> ()), flag: string)
+function GroupMT:AddSlider(text, min, max, default, step, callback) flag: string)
 	local theme= self._tab._window.Theme
 	local window= self._tab._window
 	step = step or 1
@@ -1652,7 +1608,7 @@ end
 
 
 
-function GroupMT:AddButton(text, callback) -> ()))
+function GroupMT:AddButton(text, callback)
 	local theme= self._tab._window.Theme
 	local window= self._tab._window
 
@@ -1756,7 +1712,7 @@ local function makeDropdownBase(window, theme, row, anchorBtn)
 	return panel, search, listFrame, layout
 end
 
-function GroupMT:AddDropdown(text, items, default, callback) -> ()), flag: string)
+function GroupMT:AddDropdown(text, items, default, callback) flag: string)
 	local theme= self._tab._window.Theme
 	local window= self._tab._window
 	local selected = default or (items[1] or "")
@@ -1891,7 +1847,7 @@ function GroupMT:AddDropdown(text, items, default, callback) -> ()), flag: strin
 	return {Get=function() return selected end, Set=function(v: string) selected=v; btn.Text=v; if callback then task.spawn(callback, v) end end}
 end
 
-function GroupMT:AddMultiDropdown(text, items, default, callback) -> ()), flag: string)
+function GroupMT:AddMultiDropdown(text, items, default, callback) flag: string)
 	local theme= self._tab._window.Theme
 	local window= self._tab._window
 
@@ -2097,11 +2053,11 @@ local WHEEL_IMG = "rbxassetid://78013985921887"
 local function hsvToColor(h, s, v)
 	return Color3.fromHSV(h, s, v)
 end
-local function colorToHSV(c)
+local function colorToHSV(c) number, number)
 	return c:ToHSV()
 end
 
-function GroupMT:AddColorPicker(text, default, callback) -> ()), flag: string)
+function GroupMT:AddColorPicker(text, default, callback) flag: string)
 	local theme= self._tab._window.Theme
 	local window= self._tab._window
 
