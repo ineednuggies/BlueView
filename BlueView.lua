@@ -93,6 +93,24 @@ local _Lucide: any = nil
 local _LucideTried = false
 
 local function _safeLoadLucide()
+
+-- Normalize requested size to the closest supported Lucide atlas size.
+-- Many packs only ship specific sizes (16/20/24/28/32/48). If you request 18,
+-- some icons may return nil. We snap to nearest to match Obsidian/Linoria behavior.
+local function _normalizeLucideSize(s: number): number
+	local sizes = {16, 20, 24, 28, 32, 48}
+	local best = sizes[1]
+	local bestDist = math.abs(s - best)
+	for i = 2, #sizes do
+		local d = math.abs(s - sizes[i])
+		if d < bestDist then
+			best = sizes[i]
+			bestDist = d
+		end
+	end
+	return best
+end
+
 	if _LucideTried then return end
 	_LucideTried = true
 	local ok, mod = pcall(function()
@@ -113,6 +131,9 @@ end
 
 local function _normalizeIconData(v: any): IconResolved?
 	if not v then return nil end
+	if typeof(v) == "number" then
+		return { image = ("rbxassetid://%d"):format(v) }
+	end
 	if typeof(v) == "string" then
 		return { image = v }
 	end
@@ -132,45 +153,37 @@ local function _lucideGet(name: string, size: number?): IconResolved?
 	_safeLoadLucide()
 	if not _Lucide then return nil end
 
-	local s = tonumber(size) or 48
+	local s = _normalizeLucideSize(tonumber(size) or 48)
 	local data: any = nil
-
-	-- Packs vary; try common getters and shapes.
--- 1:1 Obsidian/Linoria style: lucide-roblox-direct exposes GetAsset(name[, size])
+-- Obsidian/Linoria style: GetAsset() returns {Url/ImageRectOffset/ImageRectSize} or asset id.
 if type(_Lucide.GetAsset) == "function" then
-	-- try (name) first
-	local ok1, v1 = pcall(_Lucide.GetAsset, name)
-	if ok1 and v1 then
-		data = v1
-	else
-		-- try (name, size)
-		local ok2, v2 = pcall(_Lucide.GetAsset, name, s)
-		if ok2 and v2 then
-			data = v2
-		end
+	local ok, asset = pcall(_Lucide.GetAsset, name)
+	if not ok or not asset then
+		ok, asset = pcall(_Lucide.GetAsset, name, s)
+	end
+	if ok and asset then
+		data = asset
 	end
 end
-if data ~= nil then
-	return _normalizeIconData(data)
+if not data and type(_Lucide.Get) == "function" then
+	local ok, v = pcall(_Lucide.Get, name, s)
+	if ok then data = v end
 end
+if not data and type(_Lucide.get) == "function" then
+	local ok, v = pcall(_Lucide.get, name, s)
+	if ok then data = v end
+end
+if not data and type(_Lucide.GetIcon) == "function" then
+	local ok, v = pcall(_Lucide.GetIcon, name, s)
+	if ok then data = v end
+end
+if not data and type(_Lucide.Icons) == "table" then
+	data = _Lucide.Icons[name]
+end
+if not data then return nil end
+return _normalizeIconData(data)
 
-	if type(_Lucide.Get) == "function" then
-		local ok, v = pcall(_Lucide.Get, name, s)
-		if ok then data = v end
-	end
-	if not data and type(_Lucide.get) == "function" then
-		local ok, v = pcall(_Lucide.get, name, s)
-		if ok then data = v end
-	end
-	if not data and type(_Lucide.GetIcon) == "function" then
-		local ok, v = pcall(_Lucide.GetIcon, name, s)
-		if ok then data = v end
-	end
-	if not data and type(_Lucide.Icons) == "table" then
-		data = _Lucide.Icons[name]
-	end
 
-	return _normalizeIconData(data)
 end
 
 -- Resolve any icon input to {image, rectOffset, rectSize}
@@ -220,11 +233,12 @@ local function makeIcon(iconData: IconResolved?, size: number, transparency: num
 		ImageTransparency = transparency or 0,
 		ScaleType = Enum.ScaleType.Fit,
 	})
-	if iconData and iconData.rectOffset then
+	if iconData and iconData.rectOffset and iconData.rectSize then
 		img.ImageRectOffset = iconData.rectOffset
-	end
-	if iconData and iconData.rectSize then
 		img.ImageRectSize = iconData.rectSize
+	else
+		img.ImageRectOffset = Vector2.new(0, 0)
+		img.ImageRectSize = Vector2.new(0, 0)
 	end
 	return img
 end
@@ -460,6 +474,22 @@ local root = mk("Frame", {
 	})
 	withUICorner(appIcon, 8)
 	withUIStroke(appIcon, theme.Stroke, 0.35, 1)
+-- App icon (logo): supports lucide name / asset id / rbxassetid string
+local logoSize = _normalizeLucideSize(tonumber(options.LogoIconSize) or 18)
+local logoIcon = options.LogoIcon
+local logoData = nil
+if logoIcon ~= nil then
+	logoData = resolveIcon(iconProvider, logoIcon, logoSize)
+end
+
+if logoData then
+	local img = makeIcon(logoData, logoSize, 0)
+	img.AnchorPoint = Vector2.new(0.5, 0.5)
+	img.Position = UDim2.fromScale(0.5, 0.5)
+	img.ImageColor3 = theme.Accent
+	img.ZIndex = 13
+	img.Parent = appIcon
+else
 	mk("TextLabel", {
 		BackgroundTransparency = 1,
 		Size = UDim2.fromScale(1, 1),
@@ -470,6 +500,7 @@ local root = mk("Frame", {
 		ZIndex = 13,
 		Parent = appIcon,
 	})
+end
 
 	local titleLabel = mk("TextLabel", {
 		BackgroundTransparency = 1,
