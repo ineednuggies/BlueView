@@ -55,173 +55,33 @@ end
 
 
 
-export type IconResolved = {
-	Image: string,
-	ImageRectOffset: Vector2?,
-	ImageRectSize: Vector2?,
-}
+export type IconProvider = (name: string) -> string?
 
-export type IconProvider = (name: string, size: number?) -> IconResolved?
-
-local _LUCIDE_URLS = {
-	"https://raw.githubusercontent.com/deividcomsono/lucide-roblox-direct/main/source.lua",
-	"https://raw.githubusercontent.com/deividcomsono/lucide-roblox-direct/refs/heads/main/source.lua",
-}
-
-local _Lucide: any = nil
-local _LucideTried = false
-
-local function _safeHttpGet(url: string): (boolean, string)
-	local ok, res = pcall(game.HttpGet, game, url)
-	if ok and type(res) == "string" then
-		return true, res
-	end
-	return false, ""
-end
-
-local function _safeLoadLucide()
-	if _LucideTried then return end
-	_LucideTried = true
-
-	for _, url in ipairs(_LUCIDE_URLS) do
-		local ok, src = _safeHttpGet(url)
-		if ok and src ~= "" then
-			local ok2, mod = pcall(function()
-				return loadstring(src)()
-			end)
-			if ok2 and mod then
-				_Lucide = mod
-				return
-			end
-		end
-	end
-end
-
-local function _normalizeLucideSizeSafe(s: number): number
-	local sizes = {16, 20, 24, 28, 32, 48}
-	local v = tonumber(s) or 24
-	local best = sizes[1]
-	local bestDist = math.abs(v - best)
-	for i = 2, #sizes do
-		local d = math.abs(v - sizes[i])
-		if d < bestDist then
-			best = sizes[i]
-			bestDist = d
-		end
-	end
-	return best
-end
-
-local function _normalizeIconData(v: any): IconResolved?
-	if not v then return nil end
-	if typeof(v) == "string" then
-		return { Image = v }
-	end
-	if typeof(v) == "number" then
-		return { Image = ("rbxassetid://%d"):format(v) }
-	end
-	if typeof(v) == "table" then
-
-		if typeof(v.Url) == "string" then
-			return {
-				Image = v.Url,
-				ImageRectOffset = v.ImageRectOffset,
-				ImageRectSize = v.ImageRectSize,
-			}
-		end
-
-
-		local id = v.Id or v.id
-		if typeof(id) == "number" then
-			return { Image = ("rbxassetid://%d"):format(id) }
-		end
-		if typeof(v.Image) == "string" then
-			return { Image = v.Image }
-		end
-		if typeof(v.image) == "string" then
-			return { Image = v.image }
-		end
-	end
-	return nil
-end
-
-local function _lucideGet(name: string, size: number?): IconResolved?
-	_safeLoadLucide()
-	if not _Lucide then return nil end
-
-	local s = _normalizeLucideSizeSafe(tonumber(size) or 24)
-	local data: any = nil
-
-
-	if type(_Lucide.GetAsset) == "function" then
-		local ok, v = pcall(_Lucide.GetAsset, name, s)
-		if ok and v then data = v end
-		if not data then
-			local ok2, v2 = pcall(_Lucide.GetAsset, name)
-			if ok2 and v2 then data = v2 end
-		end
-	end
-
-
-	if not data and type(_Lucide.Get) == "function" then
-		local ok, v = pcall(_Lucide.Get, name, s)
-		if ok and v then data = v end
-	end
-	if not data and type(_Lucide.get) == "function" then
-		local ok, v = pcall(_Lucide.get, name, s)
-		if ok and v then data = v end
-	end
-	if not data and type(_Lucide.GetIcon) == "function" then
-		local ok, v = pcall(_Lucide.GetIcon, name, s)
-		if ok and v then data = v end
-	end
-
-	if not data and type(_Lucide.Icons) == "table" then
-		data = _Lucide.Icons[name]
-	end
-
-	return _normalizeIconData(data)
-end
-
-local function DefaultIconProvider(name: string, size: number?): IconResolved?
-	return _lucideGet(name, size)
-end
-
-local function resolveIcon(iconProvider: IconProvider?, icon: string?, size: number?): IconResolved?
+local function resolveIcon(iconProvider: IconProvider?, icon: string?): string?
 	if not icon then return nil end
-
-
-	if string.find(icon, "rbxassetid://") == 1 or string.find(icon, "http") == 1 then
-		return { Image = icon }
+	if string.find(icon, "rbxassetid://") == 1 then
+		return icon
 	end
-
-	local provider = iconProvider or DefaultIconProvider
-	local key = icon
-
 	local prefix = "lucide:"
 	if string.find(icon, prefix) == 1 then
-		key = string.sub(icon, #prefix + 1)
+		local key = string.sub(icon, #prefix + 1)
+		return iconProvider and iconProvider(key) or nil
 	end
-
-	return provider and provider(key, size) or nil
+	return iconProvider and iconProvider(icon) or nil
 end
 
-local function makeIcon(data: IconResolved?, size: number, transparency: number?)
-	local img = mk("ImageLabel", {
+local function makeIcon(imageId: string?, size: number, transparency: number?)
+	return mk("ImageLabel", {
 		BackgroundTransparency = 1,
 		Size = UDim2.fromOffset(size, size),
-		Image = (data and data.Image) or "",
+		Image = imageId or "",
 		ImageTransparency = transparency or 0,
 		ScaleType = Enum.ScaleType.Fit,
 	})
-	if data and data.ImageRectOffset then
-		img.ImageRectOffset = data.ImageRectOffset
-	end
-	if data and data.ImageRectSize then
-		img.ImageRectSize = data.ImageRectSize
-	end
-	return img
 end
+
+
+
 
 export type Theme = {
 	Accent: Color3,
@@ -328,7 +188,7 @@ end
 function UILib.new(options: WindowOptions): Window
 	options = options or {}
 	local theme = options.Theme or DefaultTheme
-	local iconProvider = options.IconProvider or DefaultIconProvider
+	local iconProvider = options.IconProvider
 
 	local parent = options.Parent
 	if not parent then
@@ -640,8 +500,8 @@ local root = mk("Frame", {
 	withUIStroke(searchBox, theme.Stroke, 0.35, 1)
 	mk("UIPadding", {PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12), Parent = searchBox})
 
-	local searchIconData = resolveIcon(iconProvider, "lucide:search", 18, 18)
-	local searchIcon = makeIcon(searchIconData, 18, 0.12)
+	local searchIconId = resolveIcon(iconProvider, "lucide:search")
+	local searchIcon = makeIcon(searchIconId, 18, 0.12)
 	searchIcon.ZIndex = 8
 	searchIcon.Parent = searchBox
 	searchIcon.Position = UDim2.new(0, 0, 0.5, -9)
@@ -734,11 +594,6 @@ local root = mk("Frame", {
 	self._themeWatchers = {} :: { (Theme) -> () }
 	self._flags = {} :: {[string]: {get: () -> any, set: (any) -> ()}}
 	self._categories = {} :: {[string]: boolean}
-
-	self._categoryOrder = {}
-	self._tabsByCategory = {}
-	self._categoryNodes = {}
-	self._currentCategory = nil
 
 	self._activePopup = nil :: Frame?
 	self._activePopupClose = nil :: PopupCloser?
@@ -1121,74 +976,38 @@ end
 
 
 
-function WindowMT:_RebuildTabList()
+function WindowMT:AddCategory(name: string)
+	if self._categories[name] then return end
+	self._categories[name] = true
 
-	for _, nodes in pairs(self._categoryNodes) do
-		if nodes.header then pcall(function() nodes.header:Destroy() end) end
-		if nodes.spacer then pcall(function() nodes.spacer:Destroy() end) end
-	end
-	self._categoryNodes = {}
+	self._layoutCounter += 1
+	local header = mk("TextLabel", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 18),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = name,
+		TextSize = 12,
+		Font = Enum.Font.GothamSemibold,
+		TextColor3 = self.Theme.Muted,
+		LayoutOrder = self._layoutCounter,
+		ZIndex = 8,
+		Parent = self._ui.tabButtons,
+	})
+	self:_BindTheme(header, "TextColor3", "Muted")
 
-	local order = 0
-	for _, catName in ipairs(self._categoryOrder) do
+	self._layoutCounter += 1
+	mk("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 2),
+		LayoutOrder = self._layoutCounter,
+		ZIndex = 7,
+		Parent = self._ui.tabButtons,
+	})
 
-		order += 1
-		local header = mk("TextLabel", {
-			BackgroundTransparency = 1,
-			Size = UDim2.new(1, 0, 0, 18),
-			TextXAlignment = Enum.TextXAlignment.Left,
-			Text = catName,
-			TextSize = 12,
-			Font = Enum.Font.GothamSemibold,
-			TextColor3 = self.Theme.Muted,
-			LayoutOrder = order,
-			ZIndex = 8,
-			Parent = self._ui.tabButtons,
-		})
-		self:_BindTheme(header, "TextColor3", "Muted")
-
-		order += 1
-		local spacer = mk("Frame", {
-			BackgroundTransparency = 1,
-			Size = UDim2.new(1, 0, 0, 2),
-			LayoutOrder = order,
-			ZIndex = 7,
-			Parent = self._ui.tabButtons,
-		})
-
-		self._categoryNodes[catName] = {header = header, spacer = spacer}
-
-		local list = self._tabsByCategory[catName]
-		if list then
-			for _, tabBtn in ipairs(list) do
-				order += 1
-				tabBtn.LayoutOrder = order
-				tabBtn.Parent = self._ui.tabButtons
-			end
-		end
-	end
-
-	self._layoutCounter = order
 	self:_UpdateSelectedBarDeferred(true)
 end
 
-function WindowMT:AddCategory(name: string)
-	if not name or name == "" then return end
-	if self._categories[name] then
-		self._currentCategory = name
-		return
-	end
-
-	self._categories[name] = true
-	table.insert(self._categoryOrder, name)
-	self._tabsByCategory[name] = self._tabsByCategory[name] or {}
-	self._currentCategory = name
-
-	self:_RebuildTabList()
-end
-
-
-local function makeSidebarTab(theme: Theme, iconProvider: IconProvider?, name: string, icon: string?, iconSize: number?)
+local function makeSidebarTab(theme: Theme, iconProvider: IconProvider?, name: string, icon: string?)
 	local btn = mk("TextButton", {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
@@ -1209,12 +1028,11 @@ local function makeSidebarTab(theme: Theme, iconProvider: IconProvider?, name: s
 
 	mk("UIPadding", {PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), Parent = btn})
 
-	local sz = tonumber(iconSize) or 18
-	local iconData = resolveIcon(iconProvider, icon, sz, 18)
-	local iconImg = makeIcon(iconData, sz, 0.45)
+	local iconId = resolveIcon(iconProvider, icon)
+	local iconImg = makeIcon(iconId, 18, 0.45)
 	iconImg.ZIndex = 3
 	iconImg.Parent = btn
-	iconImg.Position = UDim2.new(0, 10, 0.5, -(sz/2))
+	iconImg.Position = UDim2.new(0, 10, 0.5, -9)
 
 	local label = mk("TextLabel", {
 		BackgroundTransparency = 1,
@@ -1232,33 +1050,17 @@ local function makeSidebarTab(theme: Theme, iconProvider: IconProvider?, name: s
 	return btn, bg, label, iconImg
 end
 
-function WindowMT:AddTab(name: string, icon: string?, iconSizeOrCategory: any, categoryMaybe: any)
-	local iconSize: number? = nil
-	local category: string? = nil
-
-	if type(iconSizeOrCategory) == "number" then
-		iconSize = iconSizeOrCategory
-		if type(categoryMaybe) == "string" then
-			category = categoryMaybe
-		end
-	elseif type(iconSizeOrCategory) == "string" then
-		category = iconSizeOrCategory
+function WindowMT:AddTab(name: string, icon: string?, category: string?)
+	if category and category ~= "" then
+		self:AddCategory(category)
 	end
-
-	if not category or category == "" then
-		category = self._currentCategory or self._categoryOrder[1]
-	end
-	if not category or category == "" then
-		category = "Main"
-	end
-
-	self:AddCategory(category)
 
 	local theme: Theme = self.Theme
-	local btn, bg, label, iconImg = makeSidebarTab(theme, self.IconProvider, name, icon, iconSize)
+	local btn, bg, label, iconImg = makeSidebarTab(theme, self.IconProvider, name, icon)
 
-
-	table.insert(self._tabsByCategory[category], btn)
+	self._layoutCounter += 1
+	btn.LayoutOrder = self._layoutCounter
+	btn.Parent = self._ui.tabButtons
 
 	local page = mk("Frame", {
 		Name = "Tab_" .. name,
@@ -1278,10 +1080,11 @@ function WindowMT:AddTab(name: string, icon: string?, iconSizeOrCategory: any, c
 		ScrollBarImageTransparency = 0.2,
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		CanvasSize = UDim2.fromOffset(0, 0),
+		ZIndex = 8,
 		Parent = page,
 	})
-	mk("UIListLayout", {Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = colLeft})
-	mk("UIPadding", {PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10), PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), Parent = colLeft})
+	mk("UIPadding", {PaddingTop=UDim.new(0,10),PaddingBottom=UDim.new(0,10),PaddingLeft=UDim.new(0,10),PaddingRight=UDim.new(0,10),Parent=colLeft})
+	mk("UIListLayout", {SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,10),Parent=colLeft})
 
 	local colRight = mk("ScrollingFrame", {
 		Name = "Right",
@@ -1293,52 +1096,61 @@ function WindowMT:AddTab(name: string, icon: string?, iconSizeOrCategory: any, c
 		ScrollBarImageTransparency = 0.2,
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		CanvasSize = UDim2.fromOffset(0, 0),
+		ZIndex = 8,
 		Parent = page,
 	})
-	mk("UIListLayout", {Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = colRight})
-	mk("UIPadding", {PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10), PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), Parent = colRight})
+	mk("UIPadding", {PaddingTop=UDim.new(0,10),PaddingBottom=UDim.new(0,10),PaddingLeft=UDim.new(0,10),PaddingRight=UDim.new(0,10),Parent=colRight})
+	mk("UIListLayout", {SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,10),Parent=colRight})
 
-	local tab = {
-		Name = name,
-		Button = btn,
-		Page = page,
-		Left = colLeft,
-		Right = colRight,
-		_cols = {Left = colLeft, Right = colRight},
-		_groupboxes = {},
-		_page = page,
-		_btn = btn,
-		_btnBg = bg,
-		_btnLabel = label,
-		_btnIcon = iconImg,
-		_groups = {},
-		_order = 0,
-		_window = self,
-	}
-	setmetatable(tab, TabMT)
+	local tab: any = setmetatable({}, TabMT)
+	tab.Name = name
+	tab._window = self
+	tab._btn = btn
+	tab._btnBg = bg
+	tab._btnLabel = label
+	tab._btnIcon = iconImg
+	tab._page = page
+	tab._cols = {Left = colLeft, Right = colRight}
+	tab._groupboxes = {}
 
 	self.Tabs[name] = tab
 	table.insert(self._tabOrder, tab)
 
 
+	self:_BindTheme(label, "TextColor3", "Muted")
+	self:_BindTheme(bg, "BackgroundColor3", "Panel")
+
 	btn.MouseButton1Click:Connect(function()
-		self:SelectTab(tab)
+		self:SelectTab(name, false)
 	end)
 
-
-	self:_RebuildTabList()
-
+	btn.MouseEnter:Connect(function()
+		if self.SelectedTab ~= tab then
+			tween(bg, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 0.55})
+			tween(label, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextColor3 = theme.Text})
+			if iconImg then iconImg.ImageTransparency = 0.25 end
+		end
+	end)
+	btn.MouseLeave:Connect(function()
+		if self.SelectedTab ~= tab then
+			tween(bg, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
+			tween(label, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextColor3 = theme.Muted})
+			if iconImg then iconImg.ImageTransparency = 0.45 end
+		end
+	end)
 
 	if not self.SelectedTab then
-		self:SelectTab(tab)
+		task.defer(function()
+			self:SelectTab(name, true)
+			self:_UpdateSelectedBarDeferred(true)
+		end)
 	end
 
 	return tab
 end
 
-
-function WindowMT:SelectTab(name: any, instant: boolean?)
-	local tab = (type(name) == "table" and name) or self.Tabs[name]
+function WindowMT:SelectTab(name: string, instant: boolean?)
+	local tab = self.Tabs[name]
 	if not tab then return end
 
 
@@ -1429,31 +1241,31 @@ local function makeGroupbox(theme: Theme, iconProvider: IconProvider?, title: st
 		Parent = header,
 	})
 
-	local chevronDown = resolveIcon(iconProvider, "lucide:chevron-down", 18)
-	local chevronRight = resolveIcon(iconProvider, "lucide:chevron-right", 18)
-	local chevronDown = chevronDown and chevronDown.Image or nil
-	local chevronRight = chevronRight and chevronRight.Image or nil
+	local chevronDown = resolveIcon(iconProvider, "lucide:chevron-down")
+	local chevronRight = resolveIcon(iconProvider, "lucide:chevron-right")
 
 	local icon = mk("ImageLabel", {
 		BackgroundTransparency = 1,
 		Size = UDim2.fromScale(1, 1),
-		Image = chevronDown or "",
+		Image = ((type(chevronDown)=="table" and chevronDown.Image) or (type(chevronDown)=="string" and chevronDown) or "") ,
 		ImageTransparency = 0.15,
 		Parent = collapseBtn,
 	})
-	if chevronDown then
-		if chevronDown.ImageRectOffset then icon.ImageRectOffset = chevronDown.ImageRectOffset end
-		if chevronDown.ImageRectSize then icon.ImageRectSize = chevronDown.ImageRectSize end
-	end
+
+if type(chevronDown) == "table" then
+	if chevronDown.ImageRectOffset then icon.ImageRectOffset = chevronDown.ImageRectOffset end
+	if chevronDown.ImageRectSize then icon.ImageRectSize = chevronDown.ImageRectSize end
+end
+
 
 	local fallback = mk("TextLabel", {
 		BackgroundTransparency = 1,
 		Size = UDim2.fromScale(1, 1),
-		Text = chevronDown and "" or "v",
+		Text = ((type(chevronDown) == "table" and chevronDown.Image) or (type(chevronDown) == "string" and chevronDown ~= "")) and "" or "v",
 		TextSize = 16,
 		Font = Enum.Font.GothamBold,
 		TextColor3 = theme.SubText,
-		Visible = (chevronDown == nil),
+		Visible = (not (type(chevronDown) == "table" and chevronDown.Image) and not (type(chevronDown) == "string" and chevronDown ~= "")),
 		Parent = collapseBtn,
 	})
 	if window then window:_BindTheme(fallback, "TextColor3", "SubText") end
@@ -1497,21 +1309,19 @@ function TabMT:AddGroupbox(title: string, opts: {Side: ("Left"|"Right")?, Initia
 	opts = opts or {}
 	local side = opts.Side or "Left"
 	if side ~= "Left" and side ~= "Right" then
-		if tostring(side):lower() == "right" then side = "Right" else side = "Left" end
+		local s = tostring(side):lower()
+		side = (s == "right") and "Right" or "Left"
 	end
 
 	local window: any = self._window
+
 	local theme: Theme = window.Theme
 	local frame, contentMask, content, list, collapseBtn, icon, fallback, chevronDown, chevronRight, PAD, GAP =
 		makeGroupbox(theme, window.IconProvider, title, window)
 
 	local cols = self._cols or {Left = self.Left, Right = self.Right}
 	self._cols = cols
-	local sideKey = (side == "Right" or side == "right") and "Right" or "Left"
-	local parentCol = cols[sideKey] or cols.Left or cols.Right
-	if parentCol then
-		frame.Parent = parentCol
-	end
+	frame.Parent = cols[side] or cols.Left or cols.Right
 	frame.LayoutOrder = #self._groupboxes + 1
 
 	local gb: any = setmetatable({}, GroupMT)
@@ -1524,27 +1334,66 @@ function TabMT:AddGroupbox(title: string, opts: {Side: ("Left"|"Right")?, Initia
 	gb._collapsed = false
 	table.insert(self._groupboxes, gb)
 
-	local HEADER_H = 26
-		local function setIconCollapsed(state: boolean)
-		local d: any = nil
-		if chevronDown then
-			d = state and (chevronRight or chevronDown) or chevronDown
-		end
+local HEADER_H = 26
+local function setIconCollapsed(state: boolean)
+	local d: any = nil
+	if type(chevronDown) == "table" then
+		d = state and (chevronRight or chevronDown) or chevronDown
+	elseif type(chevronDown) == "string" then
+		icon.Image = state and (chevronRight or chevronDown) or chevronDown
+		icon.ImageTransparency = 0.15
+		fallback.Text = ""
+		fallback.Visible = false
+		return
+	else
+		fallback.Text = state and ">" or "v"
+		fallback.Visible = true
+		icon.Image = ""
+		icon.ImageTransparency = 1
+		return
+	end
 
-		if d and d.Image then
-			icon.Image = d.Image
-			icon.ImageTransparency = 0
-			icon.ImageRectOffset = d.ImageRectOffset or Vector2.new(0, 0)
-			icon.ImageRectSize = d.ImageRectSize or Vector2.new(0, 0)
+	if d and d.Image then
+		icon.Image = d.Image
+		icon.ImageTransparency = 0.15
+		icon.ImageRectOffset = d.ImageRectOffset or Vector2.new(0, 0)
+		icon.ImageRectSize = d.ImageRectSize or Vector2.new(0, 0)
+		fallback.Text = ""
+		fallback.Visible = false
+	else
+		icon.Image = ""
+		icon.ImageTransparency = 1
+		icon.ImageRectOffset = Vector2.new(0, 0)
+		icon.ImageRectSize = Vector2.new(0, 0)
+		fallback.Text = state and ">" or "v"
+		fallback.Visible = true
+	end
+end
+
+
+	local applyHeight
+	applyHeight = function(instant: boolean?)
+		local h = list.AbsoluteContentSize.Y
+		local contentH = if gb._collapsed then 0 else (h + 2)
+		local maskH = contentH
+		local target = (PAD * 2) + HEADER_H + GAP + maskH
+
+		if instant then
+			gb._mask.Size = UDim2.new(1, 0, 0, maskH)
+			gb._content.Size = UDim2.new(1, 0, 0, maskH)
+			gb._frame.Size = UDim2.new(1, 0, 0, target)
 		else
-			icon.Image = ""
-			icon.ImageTransparency = 1
-			icon.ImageRectOffset = Vector2.new(0, 0)
-			icon.ImageRectSize = Vector2.new(0, 0)
+			tween(gb._mask, TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, maskH)})
+			tween(gb._content, TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, maskH)})
+			tween(gb._frame, TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, target)})
 		end
 	end
 
-local function setCollapsed(state: boolean)
+	list:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+		if not gb._collapsed then applyHeight(false) end
+	end)
+
+	local function setCollapsed(state: boolean)
 		gb._collapsed = state
 		setIconCollapsed(state)
 		applyHeight(false)
