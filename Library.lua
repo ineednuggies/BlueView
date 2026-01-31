@@ -1,20 +1,33 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+--!strict
+-- BlueView.lua (SpareStackUI) - Full updated package build
+-- Features:
+-- ✅ Autoscaling + mobile support
+-- ✅ Sidebar categories + tabs w/ optional icons
+-- ✅ Inactive tabs grey, active bright
+-- ✅ Selected tab bar correct on first layout + switches
+-- ✅ Dragging doesn't snap back to center
+-- ✅ Main search starts empty (placeholder only)
+-- ✅ Dropdown + MultiDropdown: inline under control, searchable, checkbox multi-select
+-- ✅ ColorPicker: color wheel (HSV) + presets (incl. white)
+-- ✅ Popup manager: only ONE popup open at a time; switching tabs closes popups
+-- ✅ Theme binding hooks: ThemeManager can live-update all bound UI
+-- ✅ Config flags: ConfigManager can save/load toggles, sliders, dropdowns, multi dropdowns, colors
 
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+
+-- Safe size normalizer (prevents nil-call if a local helper isn't in scope)
+local function _safeNormalizeLucideSize(s: number): number
+	local fn = rawget(getfenv(), "_normalizeLucideSize")
+	if type(fn) == "function" then
+		local ok, v = pcall(fn, s)
+		if ok and type(v) == "number" then
+			return v
+		end
+	end
+	return s
+end
+
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -23,20 +36,20 @@ local LocalPlayer = Players.LocalPlayer
 local UILib = {}
 UILib.__index = UILib
 
-
-
-
-local function tween(inst, ti, props)
+--////////////////////////////////////////////////////////////
+-- Utils
+--////////////////////////////////////////////////////////////
+local function tween(inst: Instance, ti: TweenInfo, props: {[string]: any})
 	local t = TweenService:Create(inst, ti, props)
 	t:Play()
 	return t
 end
 
-local function mk(className, props, children)
+local function mk(className: string, props: {[string]: any}?, children: {Instance}?)
 	local inst = Instance.new(className)
 	if props then
 		for k, v in pairs(props) do
-			(inst)[k] = v
+			(inst :: any)[k] = v
 		end
 	end
 	if children then
@@ -47,11 +60,11 @@ local function mk(className, props, children)
 	return inst
 end
 
-local function withUICorner(parent, radius)
+local function withUICorner(parent: Instance, radius: number)
 	return mk("UICorner", {CornerRadius = UDim.new(0, radius), Parent = parent})
 end
 
-local function withUIStroke(parent, color, transparency, thickness)
+local function withUIStroke(parent: Instance, color: Color3, transparency: number, thickness: number)
 	return mk("UIStroke", {
 		Color = color,
 		Transparency = transparency,
@@ -61,38 +74,205 @@ local function withUIStroke(parent, color, transparency, thickness)
 	})
 end
 
-local function clamp01(x)
+local function clamp01(x: number): number
 	if x < 0 then return 0 end
 	if x > 1 then return 1 end
 	return x
 end
 
-local function resolveIcon(iconProvider, icon)
-	if not icon then return nil end
-	if string.find(icon, "rbxassetid://") == 1 then
-		return icon
+--////////////////////////////////////////////////////////////
+-- Icons (Lucide atlas + rects; Obsidian-style)
+--////////////////////////////////////////////////////////////
+-- IconProvider can be provided by the user, but BlueView will also auto-resolve
+-- Lucide names via lucide-roblox-direct (spritesheet + ImageRectOffset/Size).
+--
+-- You can pass icons like:
+--   "settings"        (lucide name)
+--   "lucide:settings" (explicit lucide)
+--   123456789         (roblox image id)
+--   "rbxassetid://123456789"
+--
+-- When available, Lucide icons are applied using ImageRectOffset/ImageRectSize.
+export type IconResolved = {
+	image: string,
+	rectOffset: Vector2?,
+	rectSize: Vector2?,
+}
+
+export type IconProvider = (name: string, size: number?) -> (string | IconResolved | nil)
+
+local LUCIDE_SOURCE = "https://raw.githubusercontent.com/deividcomsono/lucide-roblox-direct/refs/heads/main/source.lua"
+local _Lucide: any = nil
+local _LucideTried = false
+
+local function _safeLoadLucide()
+
+-- Normalize requested size to the closest supported Lucide atlas size.
+-- Many packs only ship specific sizes (16/20/24/28/32/48). If you request 18,
+-- some icons may return nil. We snap to nearest to match Obsidian/Linoria behavior.
+local function _normalizeLucideSize(s: number): number
+	local sizes = {16, 20, 24, 28, 32, 48}
+	local best = sizes[1]
+	local bestDist = math.abs(s - best)
+	for i = 2, #sizes do
+		local d = math.abs(s - sizes[i])
+		if d < bestDist then
+			best = sizes[i]
+			bestDist = d
+		end
 	end
+	return best
+end
+
+	if _LucideTried then return end
+	_LucideTried = true
+	local ok, mod = pcall(function()
+		return loadstring(game:HttpGet(LUCIDE_SOURCE))()
+	end)
+	if ok then
+		_Lucide = mod
+	else
+		_Lucide = nil
+	end
+end
+
+local function _isDirectAssetString(s: string): boolean
+	return (string.find(s, "rbxassetid://") == 1)
+		or (string.find(s, "http") == 1 and string.find(s, "roblox.com/asset") ~= nil)
+		or (string.find(s, "rbxthumb://") == 1)
+end
+
+local function _normalizeIconData(v: any): IconResolved?
+	if not v then return nil end
+	if typeof(v) == "number" then
+		return { image = ("rbxassetid://%d"):format(v) }
+	end
+	if typeof(v) == "string" then
+		return { image = v }
+	end
+	if typeof(v) == "table" then
+		local img = v.image or v.Url or v.Image or v.Sheet
+		if typeof(img) ~= "string" then return nil end
+		return {
+			image = img,
+			rectOffset = v.rectOffset or v.ImageRectOffset or v.RectOffset,
+			rectSize = v.rectSize or v.ImageRectSize or v.RectSize,
+		}
+	end
+	return nil
+end
+
+local function _lucideGet(name: string, size: number?): IconResolved?
+	_safeLoadLucide()
+	if not _Lucide then return nil end
+
+	local s = _safeNormalizeLucideSize(tonumber(size) or 48)
+	local data: any = nil
+-- Obsidian/Linoria style: GetAsset() returns {Url/ImageRectOffset/ImageRectSize} or asset id.
+if type(_Lucide.GetAsset) == "function" then
+	local ok, asset = pcall(_Lucide.GetAsset, name)
+	if not ok or not asset then
+		ok, asset = pcall(_Lucide.GetAsset, name, s)
+	end
+	if ok and asset then
+		data = asset
+	end
+end
+if not data and type(_Lucide.Get) == "function" then
+	local ok, v = pcall(_Lucide.Get, name, s)
+	if ok then data = v end
+end
+if not data and type(_Lucide.get) == "function" then
+	local ok, v = pcall(_Lucide.get, name, s)
+	if ok then data = v end
+end
+if not data and type(_Lucide.GetIcon) == "function" then
+	local ok, v = pcall(_Lucide.GetIcon, name, s)
+	if ok then data = v end
+end
+if not data and type(_Lucide.Icons) == "table" then
+	data = _Lucide.Icons[name]
+end
+if not data then return nil end
+return _normalizeIconData(data)
+
+
+end
+
+-- Resolve any icon input to {image, rectOffset, rectSize}
+local function resolveIcon(iconProvider: IconProvider?, icon: any, iconSize: number?): IconResolved?
+	if not icon then return nil end
+
+	-- numeric -> direct image asset
+	if typeof(icon) == "number" then
+		return { image = ("rbxassetid://%d"):format(icon) }
+	end
+
+	if typeof(icon) ~= "string" then
+		return nil
+	end
+
+	-- direct asset string
+	if _isDirectAssetString(icon) then
+		return { image = icon }
+	end
+
+	-- explicit lucide prefix
 	local prefix = "lucide:"
 	if string.find(icon, prefix) == 1 then
 		local key = string.sub(icon, #prefix + 1)
-		return iconProvider and iconProvider(key) or nil
+		local d = _lucideGet(key, iconSize)
+		if d then return d end
+		-- fallback to user provider if they want to map lucide names themselves
+		return iconProvider and _normalizeIconData(iconProvider(key, iconSize)) or nil
 	end
-	return iconProvider and iconProvider(icon) or nil
+
+	-- try user provider first (backwards compatible)
+	if iconProvider then
+		local v = iconProvider(icon, iconSize)
+		local d = _normalizeIconData(v)
+		if d then return d end
+	end
+
+	-- finally, try lucide by raw name
+	return _lucideGet(icon, iconSize)
 end
 
-local function makeIcon(imageId, size, transparency)
-	return mk("ImageLabel", {
+local function makeIcon(iconData: IconResolved?, size: number, transparency: number?)
+	local img = mk("ImageLabel", {
 		BackgroundTransparency = 1,
 		Size = UDim2.fromOffset(size, size),
-		Image = imageId or "",
+		Image = (iconData and iconData.image) or "",
 		ImageTransparency = transparency or 0,
 		ScaleType = Enum.ScaleType.Fit,
 	})
+	if iconData and iconData.rectOffset and iconData.rectSize then
+		img.ImageRectOffset = iconData.rectOffset
+		img.ImageRectSize = iconData.rectSize
+	else
+		img.ImageRectOffset = Vector2.new(0, 0)
+		img.ImageRectSize = Vector2.new(0, 0)
+	end
+	return img
 end
 
+--////////////////////////////////////////////////////////////
+-- Theme
+
+--////////////////////////////////////////////////////////////
+export type Theme = {
+	Accent: Color3,
+	BG: Color3,
+	BG2: Color3,
+	Panel: Color3,
+	Panel2: Color3,
+	Stroke: Color3,
+	Text: Color3,
+	SubText: Color3,
+	Muted: Color3,
 }
 
-local DefaultTheme= {
+local DefaultTheme: Theme = {
 	Accent = Color3.fromRGB(154, 108, 255),
 	BG     = Color3.fromRGB(10, 9, 16),
 	BG2    = Color3.fromRGB(16, 13, 26),
@@ -104,8 +284,49 @@ local DefaultTheme= {
 	Muted  = Color3.fromRGB(115, 120, 150),
 }
 
+--////////////////////////////////////////////////////////////
+-- Types
+--////////////////////////////////////////////////////////////
+export type WindowOptions = {
+	Title: string?,
+	MinimizeKey: Enum.KeyCode?,
+	UnlockMouseOnOpen: boolean?,
+	Width: number?,
+	Height: number?,
+	Parent: Instance?,
+	ToggleKey: Enum.KeyCode?,
+	Theme: Theme?,
+	IconProvider: IconProvider?,
+	KillOnClose: boolean?,
+	OnKill: (() -> ())?,
+
+	AutoScale: boolean?,
+	MinScale: number?,
+	MaxScale: number?,
+	MinSize: Vector2?,
+	MaxSize: Vector2?,
 }
 
+export type Window = {
+	Gui: ScreenGui,
+	Root: Frame,
+	IsKilled: boolean,
+
+	Destroy: (self: Window) -> (),
+	Toggle: (self: Window, state: boolean?) -> (),
+	SetKillCallback: (self: Window, killOnClose: boolean, onKill: (() -> ())?) -> (),
+	SetToggleKey: (self: Window, key: Enum.KeyCode) -> (),
+
+	AddCategory: (self: Window, name: string) -> (),
+	AddTab: (self: Window, name: string, icon: any?, iconSizeOrCategory: any?, category2: string?) -> any,
+	SelectTab: (self: Window, name: string, instant: boolean?) -> (),
+
+	SetTheme: (self: Window, theme: Theme) -> (),
+	GetTheme: (self: Window) -> Theme,
+
+	RegisterFlag: (self: Window, flag: string, getter: () -> any, setter: (any) -> ()) -> (),
+	CollectConfig: (self: Window) -> {[string]: any},
+	ApplyConfig: (self: Window, data: {[string]: any}) -> (),
 }
 
 local WindowMT = {}
@@ -117,12 +338,20 @@ TabMT.__index = TabMT
 local GroupMT = {}
 GroupMT.__index = GroupMT
 
-local function setProp(inst, prop, value)
-	(inst)[prop] = value
+--////////////////////////////////////////////////////////////
+-- Theme binding
+--////////////////////////////////////////////////////////////
+type ThemeBinding = {inst: Instance, prop: string, key: string}
+local function setProp(inst: Instance, prop: string, value: any)
+	(inst :: any)[prop] = value
 end
 
-local function isDescendantOf(inst, ancestor)
-	local cur= inst
+--////////////////////////////////////////////////////////////
+-- Popup manager (one at a time)
+--////////////////////////////////////////////////////////////
+type PopupCloser = () -> ()
+local function isDescendantOf(inst: Instance, ancestor: Instance): boolean
+	local cur: Instance? = inst
 	while cur do
 		if cur == ancestor then return true end
 		cur = cur.Parent
@@ -130,10 +359,10 @@ local function isDescendantOf(inst, ancestor)
 	return false
 end
 
-
-
-
-function UILib.new(options)
+--////////////////////////////////////////////////////////////
+-- Window
+--////////////////////////////////////////////////////////////
+function UILib.new(options: WindowOptions): Window
 	options = options or {}
 	local theme = options.Theme or DefaultTheme
 	local iconProvider = options.IconProvider
@@ -155,8 +384,8 @@ function UILib.new(options)
 		Parent = parent,
 	})
 
-
-
+	
+	-- Popup layer (dropdowns/color pickers). Parent to ScreenGui to avoid clipping by scrolling frames.
 	local popupLayer = mk("Frame", {
 		Name = "PopupLayer",
 		BackgroundTransparency = 1,
@@ -193,10 +422,10 @@ local root = mk("Frame", {
 		MinSize = options.MinSize or Vector2.new(560, 360),
 		MaxSize = options.MaxSize or Vector2.new(1400, 900),
 		Parent = root,
-	})
+	}) :: UISizeConstraint
 	local origMinSize = sizeConstraint.MinSize
 
-
+	-- Autoscale
 	local autoScale = if options.AutoScale == nil then true else options.AutoScale
 	local uiScale = mk("UIScale", {Scale = 1, Parent = root})
 	local minScale = options.MinScale or 0.68
@@ -210,7 +439,7 @@ local root = mk("Frame", {
 		local s = math.min(vp.X / baseW, vp.Y / baseH, 1)
 		s = math.clamp(s * 0.94, minScale, maxScale)
 		uiScale.Scale = s
-
+		-- IMPORTANT: don't re-center root (fix snap-back after dragging)
 	end
 	updateScale()
 	task.spawn(function()
@@ -220,7 +449,7 @@ local root = mk("Frame", {
 		end
 	end)
 
-
+	-- Topbar
 	local topbar = mk("Frame", {
 		Name = "Topbar",
 		Size = UDim2.new(1, 0, 0, 56),
@@ -258,6 +487,22 @@ local root = mk("Frame", {
 	})
 	withUICorner(appIcon, 8)
 	withUIStroke(appIcon, theme.Stroke, 0.35, 1)
+-- App icon (logo): supports lucide name / asset id / rbxassetid string
+local logoSize = _safeNormalizeLucideSize(tonumber(options.LogoIconSize) or 18)
+local logoIcon = options.LogoIcon
+local logoData = nil
+if logoIcon ~= nil then
+	logoData = resolveIcon(iconProvider, logoIcon, logoSize)
+end
+
+if logoData then
+	local img = makeIcon(logoData, logoSize, 0)
+	img.AnchorPoint = Vector2.new(0.5, 0.5)
+	img.Position = UDim2.fromScale(0.5, 0.5)
+	img.ImageColor3 = theme.Accent
+	img.ZIndex = 13
+	img.Parent = appIcon
+else
 	mk("TextLabel", {
 		BackgroundTransparency = 1,
 		Size = UDim2.fromScale(1, 1),
@@ -268,6 +513,7 @@ local root = mk("Frame", {
 		ZIndex = 13,
 		Parent = appIcon,
 	})
+end
 
 	local titleLabel = mk("TextLabel", {
 		BackgroundTransparency = 1,
@@ -297,7 +543,7 @@ local root = mk("Frame", {
 		local keyHint = mk("TextLabel", {
 			BackgroundTransparency = 1,
 			AnchorPoint = Vector2.new(1, 0.5),
-			Position = UDim2.new(1, -(14 + 94 + 12), 0.5, 0),
+			Position = UDim2.new(1, -(14 + 94 + 12), 0.5, 0), -- left of btnWrap (no overlap)
 			Size = UDim2.fromOffset(140, 20),
 			TextXAlignment = Enum.TextXAlignment.Right,
 			TextTruncate = Enum.TextTruncate.AtEnd,
@@ -306,11 +552,11 @@ local root = mk("Frame", {
 			Font = Enum.Font.Gotham,
 			TextColor3 = theme.Muted,
 			ZIndex = 13,
-			Parent = topbar,
+			Parent = topbar, -- or btnWrap; topbar gives you more room
 		})
 
 
-	local function makeTopButton(label)
+	local function makeTopButton(label: string)
 		local b = mk("TextButton", {
 			BackgroundColor3 = theme.Panel2,
 			BorderSizePixel = 0,
@@ -350,7 +596,7 @@ local root = mk("Frame", {
 	closeBtn.Parent = btnWrap
 	closeBtn.Position = UDim2.fromOffset(50, 0)
 
-
+	-- Content wrap
 	local contentWrap = mk("Frame", {
 		Name = "ContentWrap",
 		BackgroundTransparency = 1,
@@ -360,7 +606,7 @@ local root = mk("Frame", {
 		Parent = root,
 	})
 
-
+	-- Sidebar
 	local sidebar = mk("Frame", {
 		Name = "Sidebar",
 		BackgroundColor3 = theme.Panel2,
@@ -399,7 +645,7 @@ local root = mk("Frame", {
 		SortOrder = Enum.SortOrder.LayoutOrder,
 		Padding = UDim.new(0, 6),
 		Parent = tabButtons,
-	})
+	}) :: UIListLayout
 
 	local selectedBar = mk("Frame", {
 		Name = "SelectedBar",
@@ -412,7 +658,7 @@ local root = mk("Frame", {
 	})
 	withUICorner(selectedBar, 999)
 
-
+	-- Main panel
 	local mainPanel = mk("Frame", {
 		Name = "MainPanel",
 		BackgroundTransparency = 1,
@@ -429,7 +675,7 @@ local root = mk("Frame", {
 		Parent = mainPanel,
 	})
 
-
+	-- Search row
 	local searchRow = mk("Frame", {
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, 44),
@@ -459,7 +705,7 @@ local root = mk("Frame", {
 		Position = UDim2.new(0, 26, 0, 0),
 		Size = UDim2.new(1, -26, 1, 0),
 		Font = Enum.Font.Gotham,
-		Text = "",
+		Text = "", -- empty by default
 		TextSize = 14,
 		TextColor3 = theme.Text,
 		PlaceholderText = "Search element",
@@ -498,8 +744,8 @@ local root = mk("Frame", {
 		Parent = canvasBg,
 	})
 
-
-	local self= setmetatable({}, WindowMT)
+	-- Window state
+	local self: any = setmetatable({}, WindowMT)
 	self.Gui = gui
 	self.Root = root
 	self.Theme = theme
@@ -522,10 +768,10 @@ local root = mk("Frame", {
 	self._minToken = 0
 		local prevMouseBehavior = UserInputService.MouseBehavior
 		local prevMouseIcon = UserInputService.MouseIconEnabled
-
+		
 		function self:_ApplyMouseState()
 			if not self._unlockMouse then return end
-
+		
 			if self._visible then
 				prevMouseBehavior = UserInputService.MouseBehavior
 				prevMouseIcon = UserInputService.MouseIconEnabled
@@ -543,8 +789,8 @@ local root = mk("Frame", {
 	self._flags = {} :: {[string]: {get: () -> any, set: (any) -> ()}}
 	self._categories = {} :: {[string]: boolean}
 
-	self._activePopup = nil
-	self._activePopupClose = nil
+	self._activePopup = nil :: Frame?
+	self._activePopupClose = nil :: PopupCloser?
 
 	self._ui = {
 		keyHint = keyHint,
@@ -567,42 +813,42 @@ local root = mk("Frame", {
 		searchBox = searchBox,
 		searchIcon = searchIcon,
 	}
+		
 
-
-
-
-
-	function self:_BindTheme(inst, prop, key)
+	--////////////////////////////////////////////////////////////
+	-- Theme binding helpers
+	--////////////////////////////////////////////////////////////
+	function self:_BindTheme(inst: Instance, prop: string, key: string)
 		if inst == nil then return end
 		table.insert(self._themeBindings, {inst = inst, prop = prop, key = key})
 	end
-	function self:_ApplyTheme(newTheme)
+	function self:_ApplyTheme(newTheme: Theme)
 		self.Theme = newTheme
 		for _, b in ipairs(self._themeBindings) do
-			local v = (newTheme)[b.key]
+			local v = (newTheme :: any)[b.key]
 			if v ~= nil then
 				pcall(function() setProp(b.inst, b.prop, v) end)
 			end
 		end
 	end
 
-
+	-- core binds
 	self:_BindTheme(keyHint, "TextColor3", "Muted")
 	self:_BindTheme(root, "BackgroundColor3", "BG")
-	self:_BindTheme((root:FindFirstChildOfClass("UIStroke")), "Color", "Stroke")
+	self:_BindTheme((root:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 	self:_BindTheme(topbar, "BackgroundColor3", "Panel2")
 	self:_BindTheme(sidebar, "BackgroundColor3", "Panel2")
 	self:_BindTheme(selectedBar, "BackgroundColor3", "Accent")
 	self:_BindTheme(canvasBg, "BackgroundColor3", "BG2")
 	self:_BindTheme(searchBox, "BackgroundColor3", "Panel2")
-	self:_BindTheme((searchBox:FindFirstChildOfClass("UIStroke")), "Color", "Stroke")
+	self:_BindTheme((searchBox:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 	self:_BindTheme(titleLabel, "TextColor3", "Text")
 	self:_BindTheme(searchInput, "TextColor3", "Text")
 	self:_BindTheme(searchInput, "PlaceholderColor3", "Muted")
 
-
-
-
+	--////////////////////////////////////////////////////////////
+	-- Popup manager
+	--////////////////////////////////////////////////////////////
 	function self:_CloseActivePopup()
 		if self._activePopupClose then
 			pcall(self._activePopupClose)
@@ -611,7 +857,7 @@ local root = mk("Frame", {
 		self._activePopupClose = nil
 	end
 
-	function self:_SetActivePopup(popup, closer)
+	function self:_SetActivePopup(popup: Frame, closer: PopupCloser)
 		if self._activePopup and self._activePopup ~= popup then
 			self:_CloseActivePopup()
 		end
@@ -620,12 +866,12 @@ local root = mk("Frame", {
 		self._activePopupOpenedAt = os.clock()
 	end
 
-
-function self:_PositionPopupUnder(anchor, popup, yPad)
+-- Position a popup directly under an anchor control (centered), clamped to popup layer bounds
+function self:_PositionPopupUnder(anchor: GuiObject, popup: GuiObject, yPad: number?)
 	if not anchor or not popup then return end
-	local layer= self._ui.popupLayer
+	local layer: Frame = self._ui.popupLayer
 	if not layer or not layer.Parent then return end
-
+	-- ensure we have valid Absolute* (defer 1 frame if needed)
 	if layer.AbsoluteSize.X <= 0 or popup.AbsoluteSize.X <= 0 then
 		task.defer(function()
 			self:_PositionPopupUnder(anchor, popup, yPad)
@@ -644,7 +890,7 @@ function self:_PositionPopupUnder(anchor, popup, yPad)
 	local desiredX = (aPos.X - lPos.X) + math.floor((aSize.X - pSize.X) / 2)
 	local desiredY = (aPos.Y - lPos.Y) + aSize.Y + yPad
 
-
+	-- clamp inside layer
 	local maxX = math.max(0, lSize.X - pSize.X)
 	local maxY = math.max(0, lSize.Y - pSize.Y)
 	local x = math.clamp(desiredX, 0, maxX)
@@ -653,19 +899,19 @@ function self:_PositionPopupUnder(anchor, popup, yPad)
 	popup.Position = UDim2.new(0, x, 0, y)
 end
 
-
-
-
+	-- close popup on outside click + global keybinds
+	-- - ToggleKey: shows/hides the whole UI
+	-- - MinimizeKey: shows/hides the whole UI (same behavior, just a separate bind)
 	table.insert(self._connections, UserInputService.InputBegan:Connect(function(input, gp)
 		if gp then return end
 
-
+		-- keybinds
 		if input.KeyCode == self._toggleKey or input.KeyCode == self._minimizeKey then
 			self:Toggle()
 			return
 		end
 
-
+		-- outside click closes active popup
 		if not self._activePopup then return end
 		if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
 			return
@@ -683,35 +929,35 @@ end
 	end))
 
 
-
-
-
-		function self:_UpdateSelectedBar(instant)
+	--////////////////////////////////////////////////////////////
+	-- Selected bar updater
+	--////////////////////////////////////////////////////////////
+		function self:_UpdateSelectedBar(instant: boolean?)
 			local tab = self.SelectedTab
 			if not tab or not tab._btn or not tab._btn.Parent then return end
-
-			local sb= self._ui.selectedBar
-			local container= self._ui.tabButtons
-			local layout= self._ui.tabLayout
-
-
+		
+			local sb: Frame = self._ui.selectedBar
+			local container: Frame = self._ui.tabButtons
+			local layout: UIListLayout? = self._ui.tabLayout
+		
+			-- UIListLayout padding (in offsets)
 			local pad = 0
 			if layout and layout.Padding then
 				pad = layout.Padding.Offset
 			end
-
-
-			local items= {}
+		
+			-- Collect sidebar items in layout order (tabs + category headers + spacers)
+			local items: {GuiObject} = {}
 			for _, child in ipairs(container:GetChildren()) do
 				if child:IsA("GuiObject") then
-					table.insert(items, child)
+					table.insert(items, child :: GuiObject)
 				end
 			end
 			table.sort(items, function(a, b)
 				return (a.LayoutOrder or 0) < (b.LayoutOrder or 0)
 			end)
-
-
+		
+			-- Sum Y by adding each item's Size.Y.Offset + padding until we hit the selected tab button
 			local y = 0
 			for _, item in ipairs(items) do
 				if item == tab._btn then
@@ -720,10 +966,10 @@ end
 					y += math.floor((btnH - barH) / 2)
 					break
 				end
-
+		
 				y += item.Size.Y.Offset + pad
 			end
-
+		
 			local pos = UDim2.new(0, -6, 0, y)
 			if instant then
 				sb.Position = pos
@@ -731,9 +977,9 @@ end
 				tween(sb, TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), { Position = pos })
 			end
 		end
+		
 
-
-	function self:_UpdateSelectedBarDeferred(instant)
+	function self:_UpdateSelectedBarDeferred(instant: boolean?)
 		task.spawn(function()
 			RunService.RenderStepped:Wait()
 			RunService.RenderStepped:Wait()
@@ -741,20 +987,20 @@ end
 		end)
 	end
 
-
+	-- when layout changes, refresh
 	tabLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 		self:_UpdateSelectedBarDeferred(true)
 	end)
 
-
-
-
+	--////////////////////////////////////////////////////////////
+	-- Dragging
+	--////////////////////////////////////////////////////////////
 	do
 		local dragging = false
-		local dragStart= nil
-		local startPos= nil
+		local dragStart: Vector2? = nil
+		local startPos: UDim2? = nil
 
-		local function overButtons()
+		local function overButtons(): boolean
 			local p = UserInputService:GetMouseLocation()
 			local bwPos = btnWrap.AbsolutePosition
 			local bwSize = btnWrap.AbsoluteSize
@@ -786,16 +1032,16 @@ end
 		end))
 	end
 
-
-
-
-	local function applyMinimize(state)
+	--////////////////////////////////////////////////////////////
+	-- Minimize / Shrink
+	--////////////////////////////////////////////////////////////
+	local function applyMinimize(state: boolean)
 		self._minToken += 1
 		local token = self._minToken
 
 		self._minimized = state
-		local sc= self._ui.sizeConstraint
-		local origMin= self._ui.origMinSize
+		local sc: UISizeConstraint = self._ui.sizeConstraint
+		local origMin: Vector2 = self._ui.origMinSize
 
 		if state then
 			sc.MinSize = Vector2.new(origMin.X, 56)
@@ -816,7 +1062,7 @@ end
 	end
 	minimizeBtn.MouseButton1Click:Connect(function() applyMinimize(not self._minimized) end)
 
-
+	-- Close
 	local function doKill()
 		if self.IsKilled then return end
 		self.IsKilled = true
@@ -826,7 +1072,7 @@ end
 	closeBtn.MouseButton1Click:Connect(doKill)
 
 
-
+	-- Search filter (groupbox title match)
 	searchInput:GetPropertyChangedSignal("Text"):Connect(function()
 		local tab = self.SelectedTab
 		if not tab then return end
@@ -841,30 +1087,30 @@ end
 		end
 	end)
 
-
+	-- Mobile tweak
 	if UserInputService.TouchEnabled then
 		sidebar.Size = UDim2.new(0, 170, 1, 0)
 		mainPanel.Position = UDim2.new(0, 170, 0, 0)
 		mainPanel.Size = UDim2.new(1, -170, 1, 0)
 	end
 
-	return (self)
+	return (self :: any) :: Window
 end
 
-function WindowMT:SetToggleKey(key) self._toggleKey = key end
-function WindowMT:SetKillCallback(killOnClose, onKill)
+function WindowMT:SetToggleKey(key: Enum.KeyCode) self._toggleKey = key end
+function WindowMT:SetKillCallback(killOnClose: boolean, onKill: (() -> ())?)
 	self._killOnClose = killOnClose
 	self._onKill = onKill
 end
-
-function WindowMT:SetMinimizeKey(key)
+	
+function WindowMT:SetMinimizeKey(key: Enum.KeyCode)
 	self._minimizeKey = key
 	if self._ui.keyHint then
 		self._ui.keyHint.Text = "Minimize: " .. key.Name
 	end
 end
 
-function WindowMT:Toggle(state)
+function WindowMT:Toggle(state: boolean?)
 	if state == nil then self._visible = not self._visible else self._visible = state end
 	self.Gui.Enabled = self._visible
 	self:_ApplyMouseState()
@@ -877,12 +1123,12 @@ function WindowMT:Destroy()
 	if self.Gui then self.Gui:Destroy() end
 end
 
-function WindowMT:SetTheme(newTheme)
+function WindowMT:SetTheme(newTheme: Theme)
 	self:_ApplyTheme(newTheme)
 	for _, fn in ipairs(self._themeWatchers) do
 		pcall(function() fn(self.Theme) end)
 	end
-
+	-- refresh tab colors instantly
 	for _, tab in ipairs(self._tabOrder) do
 		if self.SelectedTab == tab then
 			tab._btnLabel.TextColor3 = self.Theme.Text
@@ -893,26 +1139,26 @@ function WindowMT:SetTheme(newTheme)
 		end
 	end
 end
-function WindowMT:GetTheme()
+function WindowMT:GetTheme(): Theme
 	return self.Theme
 end
 
-function WindowMT:OnThemeChanged(fn)
+function WindowMT:OnThemeChanged(fn: (Theme) -> ())
 	table.insert(self._themeWatchers, fn)
 end
 
-function WindowMT:RegisterFlag(flag, getter) setter: (any)
+function WindowMT:RegisterFlag(flag: string, getter: () -> any, setter: (any) -> ())
 	self._flags[flag] = {get = getter, set = setter}
 end
-function WindowMT:CollectConfig() any}
-	local out= {}
+function WindowMT:CollectConfig(): {[string]: any}
+	local out: {[string]: any} = {}
 	for k, v in pairs(self._flags) do
 		local ok, value = pcall(v.get)
 		if ok then out[k] = value end
 	end
 	return out
 end
-function WindowMT:ApplyConfig(data)
+function WindowMT:ApplyConfig(data: {[string]: any})
 	for k, v in pairs(data) do
 		local entry = self._flags[k]
 		if entry then
@@ -921,10 +1167,10 @@ function WindowMT:ApplyConfig(data)
 	end
 end
 
-
-
-
-function WindowMT:AddCategory(name)
+--////////////////////////////////////////////////////////////
+-- Sidebar Categories + Tabs
+--////////////////////////////////////////////////////////////
+function WindowMT:AddCategory(name: string)
 	if self._categories[name] then return end
 	self._categories[name] = true
 
@@ -955,7 +1201,7 @@ function WindowMT:AddCategory(name)
 	self:_UpdateSelectedBarDeferred(true)
 end
 
-local function makeSidebarTab(theme, iconProvider, name, icon)
+local function makeSidebarTab(theme: Theme, iconProvider: IconProvider?, name: string, icon: any, iconSize: number?)
 	local btn = mk("TextButton", {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
@@ -976,16 +1222,17 @@ local function makeSidebarTab(theme, iconProvider, name, icon)
 
 	mk("UIPadding", {PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), Parent = btn})
 
-	local iconId = resolveIcon(iconProvider, icon)
-	local iconImg = makeIcon(iconId, 18, 0.45)
+	local sz = tonumber(iconSize) or 18
+	local iconData = resolveIcon(iconProvider, icon, sz)
+	local iconImg = makeIcon(iconData, sz, 0.45)
 	iconImg.ZIndex = 3
 	iconImg.Parent = btn
-	iconImg.Position = UDim2.new(0, 10, 0.5, -9)
+	iconImg.Position = UDim2.new(0, 10, 0.5, -(sz/2))
 
 	local label = mk("TextLabel", {
 		BackgroundTransparency = 1,
-		Position = UDim2.new(0, 36, 0, 0),
-		Size = UDim2.new(1, -36, 1, 0),
+		Position = UDim2.new(0, 10 + sz + 8, 0, 0),
+		Size = UDim2.new(1, -(10 + sz + 8), 1, 0),
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Text = name,
 		TextSize = 14,
@@ -998,13 +1245,22 @@ local function makeSidebarTab(theme, iconProvider, name, icon)
 	return btn, bg, label, iconImg
 end
 
-function WindowMT:AddTab(name, icon, category)
+function WindowMT:AddTab(name: string, icon: any, iconSizeOrCategory: any?, category2: string?)
+	local iconSize: number? = nil
+	local category: string? = category2
+
+	if typeof(iconSizeOrCategory) == "number" then
+		iconSize = iconSizeOrCategory
+	elseif typeof(iconSizeOrCategory) == "string" then
+		category = iconSizeOrCategory
+	end
+
 	if category and category ~= "" then
 		self:AddCategory(category)
 	end
 
-	local theme= self.Theme
-	local btn, bg, label, iconImg = makeSidebarTab(theme, self.IconProvider, name, icon)
+	local theme: Theme = self.Theme
+	local btn, bg, label, iconImg = makeSidebarTab(theme, self.IconProvider, name, icon, iconSize)
 
 	self._layoutCounter += 1
 	btn.LayoutOrder = self._layoutCounter
@@ -1050,7 +1306,7 @@ function WindowMT:AddTab(name, icon, category)
 	mk("UIPadding", {PaddingTop=UDim.new(0,10),PaddingBottom=UDim.new(0,10),PaddingLeft=UDim.new(0,10),PaddingRight=UDim.new(0,10),Parent=colRight})
 	mk("UIListLayout", {SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,10),Parent=colRight})
 
-	local tab= setmetatable({}, TabMT)
+	local tab: any = setmetatable({}, TabMT)
 	tab.Name = name
 	tab._window = self
 	tab._btn = btn
@@ -1064,7 +1320,7 @@ function WindowMT:AddTab(name, icon, category)
 	self.Tabs[name] = tab
 	table.insert(self._tabOrder, tab)
 
-
+	-- theme binds for tab
 	self:_BindTheme(label, "TextColor3", "Muted")
 	self:_BindTheme(bg, "BackgroundColor3", "Panel")
 
@@ -1097,11 +1353,11 @@ function WindowMT:AddTab(name, icon, category)
 	return tab
 end
 
-function WindowMT:SelectTab(name, instant)
+function WindowMT:SelectTab(name: string, instant: boolean?)
 	local tab = self.Tabs[name]
 	if not tab then return end
 
-
+	-- close any open popup when switching tabs
 	self:_CloseActivePopup()
 
 	for _, t in ipairs(self._tabOrder) do
@@ -1130,14 +1386,14 @@ function WindowMT:SelectTab(name, instant)
 		if tab._btnIcon then tab._btnIcon.ImageTransparency = 0.05 end
 	end
 
-
+	-- update bar after layout settles
 	self:_UpdateSelectedBarDeferred(instant == true)
 end
 
-
-
-
-local function makeGroupbox(theme, iconProvider, title, window)
+--////////////////////////////////////////////////////////////
+-- Groupbox
+--////////////////////////////////////////////////////////////
+local function makeGroupbox(theme: Theme, iconProvider: IconProvider?, title: string, window: any)
 	local frame = mk("Frame", {
 		BackgroundColor3 = theme.Panel,
 		BorderSizePixel = 0,
@@ -1149,7 +1405,7 @@ local function makeGroupbox(theme, iconProvider, title, window)
 
 	if window then
 		window:_BindTheme(frame, "BackgroundColor3", "Panel")
-		window:_BindTheme((frame:FindFirstChildOfClass("UIStroke")), "Color", "Stroke")
+		window:_BindTheme((frame:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 	end
 
 	local inner = mk("Frame", {
@@ -1189,16 +1445,14 @@ local function makeGroupbox(theme, iconProvider, title, window)
 		Parent = header,
 	})
 
-	local chevronDown = resolveIcon(iconProvider, "lucide:chevron-down")
-	local chevronRight = resolveIcon(iconProvider, "lucide:chevron-right")
+	local chevronDown = resolveIcon(iconProvider, "lucide:chevron-down", 18)
+	local chevronRight = resolveIcon(iconProvider, "lucide:chevron-right", 18)
 
-	local icon = mk("ImageLabel", {
-		BackgroundTransparency = 1,
-		Size = UDim2.fromScale(1, 1),
-		Image = chevronDown or "",
-		ImageTransparency = 0.15,
-		Parent = collapseBtn,
-	})
+	local icon = makeIcon(chevronDown, 18, 0.15)
+	icon.AnchorPoint = Vector2.new(0.5, 0.5)
+	icon.Position = UDim2.fromScale(0.5, 0.5)
+	icon.ZIndex = 21
+	icon.Parent = collapseBtn
 
 	local fallback = mk("TextLabel", {
 		BackgroundTransparency = 1,
@@ -1247,19 +1501,19 @@ local function makeGroupbox(theme, iconProvider, title, window)
 	return frame, contentMask, content, list, collapseBtn, icon, fallback, chevronDown, chevronRight, PAD, GAP
 end
 
-function TabMT:AddGroupbox(title, opts), InitialCollapsed: boolean})
+function TabMT:AddGroupbox(title: string, opts: {Side: ("Left"|"Right")?, InitialCollapsed: boolean?}?)
 	opts = opts or {}
 	local side = opts.Side or "Left"
 
-	local window= self._window
-	local theme= window.Theme
+	local window: any = self._window
+	local theme: Theme = window.Theme
 	local frame, contentMask, content, list, collapseBtn, icon, fallback, chevronDown, chevronRight, PAD, GAP =
 		makeGroupbox(theme, window.IconProvider, title, window)
 
 	frame.Parent = self._cols[side]
 	frame.LayoutOrder = #self._groupboxes + 1
 
-	local gb= setmetatable({}, GroupMT)
+	local gb: any = setmetatable({}, GroupMT)
 	gb.Title = title
 	gb._tab = self
 	gb._frame = frame
@@ -1270,15 +1524,24 @@ function TabMT:AddGroupbox(title, opts), InitialCollapsed: boolean})
 	table.insert(self._groupboxes, gb)
 
 	local HEADER_H = 26
-	local function setIconCollapsed(state)
+	local function setIconCollapsed(state: boolean)
 		if chevronDown then
-			icon.Image = state and (chevronRight or chevronDown) or chevronDown
+			local d = (state and chevronRight) or chevronDown
+			if not d then d = chevronDown end
+			icon.Image = d.image
+			if d.rectOffset and d.rectSize then
+				icon.ImageRectOffset = d.rectOffset
+				icon.ImageRectSize = d.rectSize
+			else
+				icon.ImageRectOffset = Vector2.new(0, 0)
+				icon.ImageRectSize = Vector2.new(0, 0)
+			end
 		else
 			fallback.Text = state and ">" or "v"
 		end
 	end
 
-	local function applyHeight(instant)
+	local function applyHeight(instant: boolean?)
 		local h = list.AbsoluteContentSize.Y
 		local contentH = if gb._collapsed then 0 else (h + 2)
 		local maskH = contentH
@@ -1299,7 +1562,7 @@ function TabMT:AddGroupbox(title, opts), InitialCollapsed: boolean})
 		if not gb._collapsed then applyHeight(false) end
 	end)
 
-	local function setCollapsed(state)
+	local function setCollapsed(state: boolean)
 		gb._collapsed = state
 		setIconCollapsed(state)
 		applyHeight(false)
@@ -1316,23 +1579,23 @@ function TabMT:AddGroupbox(title, opts), InitialCollapsed: boolean})
 	return gb
 end
 
-
-
-
-local function makeRow(height)
+--////////////////////////////////////////////////////////////
+-- Controls helpers
+--////////////////////////////////////////////////////////////
+local function makeRow(height: number)
 	return mk("Frame", {BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, height)})
 end
 
+--////////////////////////////////////////////////////////////
+-- Toggle (no giant glow; subtle)
+--////////////////////////////////////////////////////////////
+local GLOW_IMG = "rbxassetid://93208570840427" -- set to your radial glow png
 
-
-
-local GLOW_IMG = "rbxassetid://93208570840427"
-
-local function addRadialGlowSimple(host, color, pad, alpha)
+local function addRadialGlowSimple(host: GuiObject, color: Color3, pad: number, alpha: number)
 	local disabled = (GLOW_IMG == "" or GLOW_IMG == "rbxassetid://0")
 	local parent = host.Parent
 	if not parent or not parent:IsA("GuiObject") then
-		local function noop(_) end
+		local function noop(_: number) end
 		return noop
 	end
 
@@ -1343,7 +1606,7 @@ local function addRadialGlowSimple(host, color, pad, alpha)
 		ZIndex = math.max(1, host.ZIndex - 1),
 		ClipsDescendants = false,
 		Parent = parent,
-	})
+	}) :: Frame
 
 	local img = mk("ImageLabel", {
 		BackgroundTransparency = 1,
@@ -1356,7 +1619,7 @@ local function addRadialGlowSimple(host, color, pad, alpha)
 		ScaleType = Enum.ScaleType.Fit,
 		ZIndex = layer.ZIndex,
 		Parent = layer,
-	})
+	}) :: ImageLabel
 
 	local dead = false
 	local function sync()
@@ -1370,13 +1633,13 @@ local function addRadialGlowSimple(host, color, pad, alpha)
 		img.ZIndex = layer.ZIndex
 	end
 
-	local function setIntensity(intensity)
+	local function setIntensity(intensity: number)
 		intensity = math.clamp(intensity, 0, 1)
 		if disabled then img.ImageTransparency = 1 return end
 		img.ImageTransparency = 1 - ((1 - alpha) * intensity)
 	end
 
-	local function setColor(newColor)
+	local function setColor(newColor: Color3)
 		img.ImageColor3 = newColor
 	end
 
@@ -1393,9 +1656,9 @@ local function addRadialGlowSimple(host, color, pad, alpha)
 	return setIntensity, setColor
 end
 
-function GroupMT:AddToggle(text, default, callback) flag: string)
-	local theme= self._tab._window.Theme
-	local window= self._tab._window
+function GroupMT:AddToggle(text: string, default: boolean?, callback: ((boolean) -> ())?, flag: string?)
+	local theme: Theme = self._tab._window.Theme
+	local window: any = self._tab._window
 	local on = default == true
 
 	local row = makeRow(40)
@@ -1445,7 +1708,7 @@ function GroupMT:AddToggle(text, default, callback) flag: string)
 	})
 	withUICorner(knob, 999)
 
-	local function set(state, fire)
+	local function set(state: boolean, fire: boolean?)
 		on = state
 		tween(track, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 			BackgroundColor3 = on and theme.Accent or theme.Stroke
@@ -1459,7 +1722,7 @@ function GroupMT:AddToggle(text, default, callback) flag: string)
 
 	btn.MouseButton1Click:Connect(function() set(not on, true) end)
 
-
+	-- keep toggle visuals correct when theme/accent changes
 	window:OnThemeChanged(function(newTheme)
 		theme = newTheme
 		knob.BackgroundColor3 = theme.Text
@@ -1483,14 +1746,38 @@ function GroupMT:AddToggle(text, default, callback) flag: string)
 	return {Set = function(v: boolean) set(v, true) end, Get = function() return on end}
 end
 
-
-
-
-function GroupMT:AddSlider(text, min, max, default, step, callback) flag: string)
-	local theme= self._tab._window.Theme
-	local window= self._tab._window
+--////////////////////////////////////////////////////////////
+-- Slider (no glow)
+--////////////////////////////////////////////////////////////
+function GroupMT:AddSlider(text: string, min: number, max: number, default: number?, step: number?, callback: ((number) -> ())?, flag: string?)
+	local theme: Theme = self._tab._window.Theme
+	local window: any = self._tab._window
 	step = step or 1
 	local value = math.clamp(default or min, min, max)
+-- Format the displayed value based on step (restores old "decimal moves" behavior)
+local function _decimalsFromStep(s: number): number
+	-- Convert to string and infer decimal precision
+	local sStr = tostring(s)
+	if sStr:find("e") or sStr:find("E") then
+		sStr = string.format("%.10f", s)
+	end
+	-- trim trailing zeros
+	sStr = sStr:gsub("0+$", "")
+	local dot = sStr:find("%.")
+	if not dot then return 0 end
+	local dec = #sStr - dot
+	if dec < 0 then dec = 0 end
+	if dec > 6 then dec = 6 end
+	return dec
+end
+local _decimals = _decimalsFromStep(step :: number)
+local function formatValue(v: number): string
+	if _decimals <= 0 then
+		return string.format("%.0f", v)
+	end
+	return string.format("%." .. tostring(_decimals) .. "f", v)
+end
+
 
 	local row = makeRow(52)
 	row.Parent = self._content
@@ -1532,7 +1819,7 @@ function GroupMT:AddSlider(text, min, max, default, step, callback) flag: string
 	withUICorner(bar, 999)
 	withUIStroke(bar, theme.Stroke, 0.5, 1)
 	window:_BindTheme(bar, "BackgroundColor3", "Panel2")
-	window:_BindTheme((bar:FindFirstChildOfClass("UIStroke")), "Color", "Stroke")
+	window:_BindTheme((bar:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 
 	local fill = mk("Frame", {
 		BackgroundColor3 = theme.Accent,
@@ -1555,7 +1842,7 @@ function GroupMT:AddSlider(text, min, max, default, step, callback) flag: string
 	})
 	withUICorner(thumb, 999)
 
-	local function apply(v, fire)
+	local function apply(v: number, fire: boolean)
 		v = math.clamp(v, min, max)
 		local steps = math.floor((v - min) / step + 0.5)
 		v = math.clamp(min + steps * step, min, max)
@@ -1570,8 +1857,44 @@ function GroupMT:AddSlider(text, min, max, default, step, callback) flag: string
 	end
 	apply(value, false)
 
+-- Mouse wheel support: when hovering the slider, wheel adjusts by 'step' instead of scrolling the page.
+local function findScrollFrame(obj: Instance): ScrollingFrame?
+	local p: Instance? = obj
+	while p do
+		if p:IsA("ScrollingFrame") then
+			return p :: any
+		end
+		p = p.Parent
+	end
+	return nil
+end
+
+local scrollFrame = findScrollFrame(row)
+local hovering = false
+
+local function setHover(on: boolean)
+	hovering = on
+	if scrollFrame then
+		scrollFrame.ScrollingEnabled = not on
+	end
+end
+
+bar.MouseEnter:Connect(function() setHover(true) end)
+bar.MouseLeave:Connect(function() setHover(false) end)
+thumb.MouseEnter:Connect(function() setHover(true) end)
+thumb.MouseLeave:Connect(function() setHover(false) end)
+
+UserInputService.InputChanged:Connect(function(input, _gp)
+	if not hovering then return end
+	if input.UserInputType == Enum.UserInputType.MouseWheel then
+		local dir = (input.Position.Z > 0) and 1 or -1
+		apply(value + (step * dir), true)
+	end
+end)
+
+
 	local dragging = false
-	local function setFromX(x)
+	local function setFromX(x: number)
 		local absPos = bar.AbsolutePosition.X
 		local absSize = bar.AbsoluteSize.X
 		local a = clamp01((x - absPos) / absSize)
@@ -1605,12 +1928,41 @@ function GroupMT:AddSlider(text, min, max, default, step, callback) flag: string
 	return {Set = function(v: number) apply(v, true) end, Get = function() return value end}
 end
 
+--////////////////////////////////////////////////////////////
+-- Button (no glow) + slightly narrower X padding
+--////////////////////////////////////////////////////////////
+function GroupMT:AddButton(text: string, iconOrCb: any?, iconSizeOrCb: any?, callback: (() -> ())?)
+	-- Supports:
+	--   AddButton("Name", function() end)                       -- old
+	--   AddButton("Name", "settings", 18, function() end)       -- lucide
+	--   AddButton("Name", 123456789, 18, function() end)        -- direct asset id
+	--   AddButton("Name", "rbxassetid://...", 18, function() end)
 
+	local theme: Theme = self._tab._window.Theme
+	local window: any = self._tab._window
 
+	local icon: any = nil
+	local iconSize: number? = nil
+	local cb: (() -> ())? = nil
 
-function GroupMT:AddButton(text, callback)
-	local theme= self._tab._window.Theme
-	local window= self._tab._window
+-- Robust arg parsing (keeps backwards compatibility with weird 3-arg patterns)
+-- We pick:
+--   cb = first function in (iconOrCb, iconSizeOrCb, callback)
+--   icon = first non-function (string/number) in those args
+--   iconSize = first number in those args (if present)
+local args = { iconOrCb, iconSizeOrCb, callback }
+for _, a in ipairs(args) do
+	if not cb and typeof(a) == "function" then
+		cb = a
+	end
+	if not iconSize and typeof(a) == "number" then
+		iconSize = a
+	end
+	if not icon and (typeof(a) == "string" or typeof(a) == "number") then
+		-- If this is actually a "flag"/misc string from older code, it will just fail to resolve and icon hides.
+		icon = a
+	end
+end
 
 	local row = makeRow(42)
 	row.Parent = self._content
@@ -1618,12 +1970,9 @@ function GroupMT:AddButton(text, callback)
 	local btn = mk("TextButton", {
 		BackgroundColor3 = theme.Panel2,
 		BorderSizePixel = 0,
-		Size = UDim2.new(1, -6, 1, 0),
+		Size = UDim2.new(1, -6, 1, 0), -- slightly less wide
 		Position = UDim2.new(0, 3, 0, 0),
-		Text = text,
-		TextSize = 14,
-		Font = Enum.Font.GothamSemibold,
-		TextColor3 = theme.Text,
+		Text = "",
 		AutoButtonColor = false,
 		ZIndex = 20,
 		Parent = row,
@@ -1632,8 +1981,38 @@ function GroupMT:AddButton(text, callback)
 	withUIStroke(btn, theme.Stroke, 0.35, 1)
 
 	window:_BindTheme(btn, "BackgroundColor3", "Panel2")
-	window:_BindTheme(btn, "TextColor3", "Text")
-	window:_BindTheme((btn:FindFirstChildOfClass("UIStroke")), "Color", "Stroke")
+	window:_BindTheme((btn:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
+
+	-- Icon + label
+	local sz = tonumber(iconSize) or 18
+	local iconData = resolveIcon(window.IconProvider, icon, sz)
+	local hasIcon = (iconData ~= nil)
+
+	local iconImg = makeIcon(iconData, sz, 0.10)
+	iconImg.Visible = hasIcon
+	iconImg.ZIndex = 21
+	iconImg.Parent = btn
+	iconImg.Position = UDim2.new(0, 12, 0.5, -(sz/2))
+
+	local labelX = 12 + (hasIcon and (sz + 8) or 0)
+
+	local label = mk("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, labelX, 0, 0),
+		Size = UDim2.new(1, -labelX, 1, 0),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = text,
+		TextSize = 14,
+		Font = Enum.Font.GothamSemibold,
+		TextColor3 = theme.Text,
+		ZIndex = 21,
+		Parent = btn,
+	})
+	window:_BindTheme(label, "TextColor3", "Text")
+	if hasIcon then
+		iconImg.ImageColor3 = theme.Text
+		window:_BindTheme(iconImg, "ImageColor3", "Text")
+	end
 
 	btn.MouseEnter:Connect(function()
 		tween(btn, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = theme.Panel})
@@ -1642,16 +2021,17 @@ function GroupMT:AddButton(text, callback)
 		tween(btn, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = theme.Panel2})
 	end)
 	btn.MouseButton1Click:Connect(function()
-		if callback then task.spawn(callback) end
+		if cb then task.spawn(cb) end
 	end)
 
 	return btn
 end
 
 
-
-
-local function makeDropdownBase(window, theme, row, anchorBtn)
+--////////////////////////////////////////////////////////////
+-- Dropdowns (inline under control, centered to button)
+--////////////////////////////////////////////////////////////
+local function makeDropdownBase(window: any, theme: Theme, row: Frame, anchorBtn: GuiObject)
 	row.ClipsDescendants = false
 
 	local panel = mk("Frame", {
@@ -1668,7 +2048,7 @@ local function makeDropdownBase(window, theme, row, anchorBtn)
 	withUIStroke(panel, theme.Stroke, 0.45, 1)
 
 	window:_BindTheme(panel, "BackgroundColor3", "Panel")
-	window:_BindTheme((panel:FindFirstChildOfClass("UIStroke")), "Color", "Stroke")
+	window:_BindTheme((panel:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 
 	local search = mk("TextBox", {
 		BackgroundColor3 = theme.Panel2,
@@ -1692,7 +2072,7 @@ local function makeDropdownBase(window, theme, row, anchorBtn)
 	window:_BindTheme(search, "BackgroundColor3", "Panel2")
 	window:_BindTheme(search, "TextColor3", "Text")
 	window:_BindTheme(search, "PlaceholderColor3", "Muted")
-	window:_BindTheme((search:FindFirstChildOfClass("UIStroke")), "Color", "Stroke")
+	window:_BindTheme((search:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 
 	local listFrame = mk("ScrollingFrame", {
 		BackgroundTransparency = 1,
@@ -1712,9 +2092,9 @@ local function makeDropdownBase(window, theme, row, anchorBtn)
 	return panel, search, listFrame, layout
 end
 
-function GroupMT:AddDropdown(text, items, default, callback) flag: string)
-	local theme= self._tab._window.Theme
-	local window= self._tab._window
+function GroupMT:AddDropdown(text: string, items: {string}, default: string?, callback: ((string) -> ())?, flag: string?)
+	local theme: Theme = self._tab._window.Theme
+	local window: any = self._tab._window
 	local selected = default or (items[1] or "")
 
 	local row = makeRow(46)
@@ -1749,7 +2129,7 @@ function GroupMT:AddDropdown(text, items, default, callback) flag: string)
 	withUIStroke(btn, theme.Stroke, 0.5, 1)
 	window:_BindTheme(btn, "BackgroundColor3", "Panel2")
 	window:_BindTheme(btn, "TextColor3", "Text")
-	window:_BindTheme((btn:FindFirstChildOfClass("UIStroke")), "Color", "Stroke")
+	window:_BindTheme((btn:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 
 	local panel, search, listFrame, layout = makeDropdownBase(window, theme, row, btn)
 	local open = false
@@ -1763,7 +2143,7 @@ function GroupMT:AddDropdown(text, items, default, callback) flag: string)
 		end)
 	end
 
-	local function rebuild(filter)
+	local function rebuild(filter: string?)
 		for _, c in ipairs(listFrame:GetChildren()) do
 			if c:IsA("TextButton") then c:Destroy() end
 		end
@@ -1786,7 +2166,7 @@ function GroupMT:AddDropdown(text, items, default, callback) flag: string)
 				withUIStroke(itemBtn, theme.Stroke, 0.65, 1)
 				window:_BindTheme(itemBtn, "BackgroundColor3", "Panel2")
 				window:_BindTheme(itemBtn, "TextColor3", "Text")
-				window:_BindTheme((itemBtn:FindFirstChildOfClass("UIStroke")), "Color", "Stroke")
+				window:_BindTheme((itemBtn:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 
 				itemBtn.MouseButton1Click:Connect(function()
 					selected = it
@@ -1805,7 +2185,7 @@ function GroupMT:AddDropdown(text, items, default, callback) flag: string)
 	local function openNow()
 		panel.Visible = true
 		panel.Size = UDim2.fromOffset(btn.AbsoluteSize.X, 0)
-
+		-- position using absolute coords so it lines up under the button
 		window:_PositionPopupUnder(btn, panel, 6)
 
 		rebuild(search.Text)
@@ -1813,7 +2193,7 @@ function GroupMT:AddDropdown(text, items, default, callback) flag: string)
 		tween(panel, TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
 			Size = UDim2.fromOffset(btn.AbsoluteSize.X, targetH),
 		})
-
+		-- re-position after size anim starts (clamp uses popup height)
 		task.defer(function()
 			if panel.Visible then
 				window:_PositionPopupUnder(btn, panel, 6)
@@ -1847,17 +2227,17 @@ function GroupMT:AddDropdown(text, items, default, callback) flag: string)
 	return {Get=function() return selected end, Set=function(v: string) selected=v; btn.Text=v; if callback then task.spawn(callback, v) end end}
 end
 
-function GroupMT:AddMultiDropdown(text, items, default, callback) flag: string)
-	local theme= self._tab._window.Theme
-	local window= self._tab._window
+function GroupMT:AddMultiDropdown(text: string, items: {string}, default: {string}?, callback: (({string}) -> ())?, flag: string?)
+	local theme: Theme = self._tab._window.Theme
+	local window: any = self._tab._window
 
-	local chosen= {}
+	local chosen: {[string]: boolean} = {}
 	if default then
 		for _, v in ipairs(default) do chosen[v] = true end
 	end
 
-	local function currentList()
-		local out= {}
+	local function currentList(): {string}
+		local out: {string} = {}
 		for _, it in ipairs(items) do
 			if chosen[it] then table.insert(out, it) end
 		end
@@ -1896,7 +2276,7 @@ function GroupMT:AddMultiDropdown(text, items, default, callback) flag: string)
 	withUIStroke(btn, theme.Stroke, 0.5, 1)
 	window:_BindTheme(btn, "BackgroundColor3", "Panel2")
 	window:_BindTheme(btn, "TextColor3", "Text")
-	window:_BindTheme((btn:FindFirstChildOfClass("UIStroke")), "Color", "Stroke")
+	window:_BindTheme((btn:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 
 	local function refreshBtnText()
 		local list = currentList()
@@ -1922,7 +2302,7 @@ function GroupMT:AddMultiDropdown(text, items, default, callback) flag: string)
 		end)
 	end
 
-	local function rebuild(filter)
+	local function rebuild(filter: string?)
 		for _, c in ipairs(listFrame:GetChildren()) do
 			if c:IsA("Frame") then c:Destroy() end
 		end
@@ -1947,7 +2327,7 @@ function GroupMT:AddMultiDropdown(text, items, default, callback) flag: string)
 				withUICorner(box, 6)
 				withUIStroke(box, theme.Stroke, 0.55, 1)
 				window:_BindTheme(box, "BackgroundColor3", "Panel2")
-				window:_BindTheme((box:FindFirstChildOfClass("UIStroke")), "Color", "Stroke")
+				window:_BindTheme((box:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 
 				local check = mk("TextLabel", {
 					BackgroundTransparency = 1,
@@ -2043,23 +2423,23 @@ function GroupMT:AddMultiDropdown(text, items, default, callback) flag: string)
 	return {Get=function() return currentList() end, Set=function(list: {string}) chosen={}; for _, s in ipairs(list) do chosen[s]=true end; refreshBtnText(); if callback then task.spawn(callback, currentList()) end end}
 end
 
+--////////////////////////////////////////////////////////////
+-- Color Picker (color wheel HSV)
+--////////////////////////////////////////////////////////////
+-- NOTE: This uses math-based wheel picking (no texture required).
+-- If you want a pretty wheel image, set WHEEL_IMG to an uploaded wheel PNG and it will render behind the picker.
+local WHEEL_IMG = "rbxassetid://78013985921887" -- e.g. "rbxassetid://<your_color_wheel_png>"
 
-
-
-
-
-local WHEEL_IMG = "rbxassetid://78013985921887"
-
-local function hsvToColor(h, s, v)
+local function hsvToColor(h: number, s: number, v: number): Color3
 	return Color3.fromHSV(h, s, v)
 end
-local function colorToHSV(c) number, number)
+local function colorToHSV(c: Color3): (number, number, number)
 	return c:ToHSV()
 end
 
-function GroupMT:AddColorPicker(text, default, callback) flag: string)
-	local theme= self._tab._window.Theme
-	local window= self._tab._window
+function GroupMT:AddColorPicker(text: string, default: Color3?, callback: ((Color3) -> ())?, flag: string?)
+	local theme: Theme = self._tab._window.Theme
+	local window: any = self._tab._window
 
 	local current = default or theme.Accent
 	local h, s, v = colorToHSV(current)
@@ -2092,7 +2472,7 @@ function GroupMT:AddColorPicker(text, default, callback) flag: string)
 	})
 	withUICorner(swatchBtn, 10)
 	withUIStroke(swatchBtn, theme.Stroke, 0.45, 1)
-	window:_BindTheme((swatchBtn:FindFirstChildOfClass("UIStroke")), "Color", "Stroke")
+	window:_BindTheme((swatchBtn:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 
 	local panel = mk("Frame", {
 		BackgroundColor3 = theme.Panel,
@@ -2107,11 +2487,11 @@ function GroupMT:AddColorPicker(text, default, callback) flag: string)
 	withUICorner(panel, 12)
 	withUIStroke(panel, theme.Stroke, 0.45, 1)
 	window:_BindTheme(panel, "BackgroundColor3", "Panel")
-	window:_BindTheme((panel:FindFirstChildOfClass("UIStroke")), "Color", "Stroke")
+	window:_BindTheme((panel:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 
 	local PANEL_H = 178
 
-
+	-- wheel area
 	local wheel = mk("Frame", {
 		BackgroundColor3 = Color3.fromRGB(25, 23, 40),
 		BorderSizePixel = 0,
@@ -2122,9 +2502,9 @@ function GroupMT:AddColorPicker(text, default, callback) flag: string)
 	})
 	withUICorner(wheel, 999)
 	withUIStroke(wheel, theme.Stroke, 0.65, 1)
-	window:_BindTheme((wheel:FindFirstChildOfClass("UIStroke")), "Color", "Stroke")
+	window:_BindTheme((wheel:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 
-
+	-- optional wheel image
 	if WHEEL_IMG ~= "" then
 		mk("ImageLabel", {
 			BackgroundTransparency = 1,
@@ -2137,7 +2517,7 @@ function GroupMT:AddColorPicker(text, default, callback) flag: string)
 		})
 	end
 
-
+	-- wheel cursor
 	local wheelCursor = mk("Frame", {
 		BackgroundColor3 = Color3.new(1,1,1),
 		BorderSizePixel = 0,
@@ -2149,7 +2529,7 @@ function GroupMT:AddColorPicker(text, default, callback) flag: string)
 	withUICorner(wheelCursor, 999)
 	withUIStroke(wheelCursor, Color3.new(0,0,0), 0.35, 1)
 
-
+	-- Value slider
 	local valBar = mk("Frame", {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
@@ -2160,7 +2540,7 @@ function GroupMT:AddColorPicker(text, default, callback) flag: string)
 	})
 	withUICorner(valBar, 10)
 	withUIStroke(valBar, theme.Stroke, 0.65, 1)
-	window:_BindTheme((valBar:FindFirstChildOfClass("UIStroke")), "Color", "Stroke")
+	window:_BindTheme((valBar:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 
 	local valFill = mk("Frame", {
 		BackgroundColor3 = Color3.new(1,1,1),
@@ -2187,7 +2567,7 @@ function GroupMT:AddColorPicker(text, default, callback) flag: string)
 	withUICorner(valCursor, 999)
 	withUIStroke(valCursor, Color3.new(0,0,0), 0.35, 1)
 
-
+	-- presets
 	local presets = mk("Frame", {
 		BackgroundTransparency = 1,
 		Position = UDim2.fromOffset(10, 138),
@@ -2205,7 +2585,7 @@ function GroupMT:AddColorPicker(text, default, callback) flag: string)
 	local function updateUIFromHSV()
 		current = hsvToColor(h, s, v)
 		swatchBtn.BackgroundColor3 = current
-
+		-- cursor positions
 		local r = math.clamp(s, 0, 1)
 		local ang = h * math.pi * 2
 		local cx = math.cos(ang) * r
@@ -2213,16 +2593,16 @@ function GroupMT:AddColorPicker(text, default, callback) flag: string)
 		wheelCursor.Position = UDim2.fromScale(0.5 + cx * 0.5, 0.5 + cy * 0.5)
 		valCursor.Position = UDim2.new(0, 0, 1 - v, -1)
 
-
+		-- adjust value gradient based on hue/sat
 		valGrad.Color = ColorSequence.new(hsvToColor(h, s, 1), Color3.new(0,0,0))
 	end
 
-	local function applyColor(fire)
+	local function applyColor(fire: boolean)
 		updateUIFromHSV()
 		if callback and fire then task.spawn(callback, current) end
 	end
 
-	local function presetBtn(c)
+	local function presetBtn(c: Color3)
 		local b = mk("TextButton", {
 			BackgroundColor3 = c,
 			BorderSizePixel = 0,
@@ -2234,7 +2614,7 @@ function GroupMT:AddColorPicker(text, default, callback) flag: string)
 		})
 		withUICorner(b, 8)
 		withUIStroke(b, theme.Stroke, 0.35, 1)
-		window:_BindTheme((b:FindFirstChildOfClass("UIStroke")), "Color", "Stroke")
+		window:_BindTheme((b:FindFirstChildOfClass("UIStroke") :: UIStroke), "Color", "Stroke")
 		b.MouseButton1Click:Connect(function()
 			h, s, v = colorToHSV(c)
 			applyColor(true)
@@ -2253,7 +2633,7 @@ function GroupMT:AddColorPicker(text, default, callback) flag: string)
 	local draggingWheel = false
 	local draggingVal = false
 
-	local function setWheelFromPos(px, py)
+	local function setWheelFromPos(px: number, py: number)
 		local p = wheel.AbsolutePosition
 		local sz = wheel.AbsoluteSize
 		local cx = (px - (p.X + sz.X/2)) / (sz.X/2)
@@ -2271,7 +2651,7 @@ function GroupMT:AddColorPicker(text, default, callback) flag: string)
 		applyColor(true)
 	end
 
-	local function setValFromPos(py)
+	local function setValFromPos(py: number)
 		local p = valBar.AbsolutePosition
 		local sz = valBar.AbsoluteSize
 		v = 1 - clamp01((py - p.Y) / sz.Y)
