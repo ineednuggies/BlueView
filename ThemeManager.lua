@@ -58,6 +58,17 @@ local DEFAULT_PRESETS = {
 		SubText= Color3.fromRGB(160, 180, 205),
 		Muted  = Color3.fromRGB(110, 125, 150),
 	}),
+	["Crimson"] = normalizeThemeKeys({
+		Accent = Color3.fromRGB(255, 90, 90),
+		BG     = Color3.fromRGB(14, 8, 10),
+		BG2    = Color3.fromRGB(22, 12, 14),
+		Panel  = Color3.fromRGB(26, 16, 18),
+		Panel2 = Color3.fromRGB(18, 10, 12),
+		Stroke = Color3.fromRGB(70, 36, 42),
+		Text   = Color3.fromRGB(255, 238, 240),
+		SubText= Color3.fromRGB(215, 170, 175),
+		Muted  = Color3.fromRGB(160, 115, 120),
+	}),
 }
 
 function ThemeManager.GetDefaultPresets()
