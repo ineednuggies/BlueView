@@ -1,17 +1,4 @@
---!strict
--- BlueView.lua (SpareStackUI) - Full updated package build
--- Features:
--- ✅ Autoscaling + mobile support
--- ✅ Sidebar categories + tabs w/ optional icons
--- ✅ Inactive tabs grey, active bright
--- ✅ Selected tab bar correct on first layout + switches
--- ✅ Dragging doesn't snap back to center
--- ✅ Main search starts empty (placeholder only)
--- ✅ Dropdown + MultiDropdown: inline under control, searchable, checkbox multi-select
--- ✅ ColorPicker: color wheel (HSV) + presets (incl. white)
--- ✅ Popup manager: only ONE popup open at a time; switching tabs closes popups
--- ✅ Theme binding hooks: ThemeManager can live-update all bound UI
--- ✅ Config flags: ConfigManager can save/load toggles, sliders, dropdowns, multi dropdowns, colors
+
 
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -1437,8 +1424,10 @@ local function makeGroupbox(theme: Theme, iconProvider: IconProvider?, title: st
 		Parent = header,
 	})
 
-	local chevronDown = resolveIcon(iconProvider, "lucide:chevron-down", 18)
-	local chevronRight = resolveIcon(iconProvider, "lucide:chevron-right", 18)
+	local chevronDownData = resolveIcon(iconProvider, "lucide:chevron-down", 18)
+	local chevronRightData = resolveIcon(iconProvider, "lucide:chevron-right", 18)
+	local chevronDown = chevronDownData and chevronDownData.Image or nil
+	local chevronRight = chevronRightData and chevronRightData.Image or nil
 
 	local icon = mk("ImageLabel", {
 		BackgroundTransparency = 1,
@@ -1447,15 +1436,19 @@ local function makeGroupbox(theme: Theme, iconProvider: IconProvider?, title: st
 		ImageTransparency = 0.15,
 		Parent = collapseBtn,
 	})
+	if chevronDownData then
+		if chevronDownData.ImageRectOffset then icon.ImageRectOffset = chevronDownData.ImageRectOffset end
+		if chevronDownData.ImageRectSize then icon.ImageRectSize = chevronDownData.ImageRectSize end
+	end
 
 	local fallback = mk("TextLabel", {
 		BackgroundTransparency = 1,
 		Size = UDim2.fromScale(1, 1),
-		Text = chevronDown and "" or "v",
+		Text = chevronDownData and "" or "v",
 		TextSize = 16,
 		Font = Enum.Font.GothamBold,
 		TextColor3 = theme.SubText,
-		Visible = (chevronDown == nil),
+		Visible = (chevronDownData == nil),
 		Parent = collapseBtn,
 	})
 	if window then window:_BindTheme(fallback, "TextColor3", "SubText") end
@@ -1519,8 +1512,11 @@ function TabMT:AddGroupbox(title: string, opts: {Side: ("Left"|"Right")?, Initia
 
 	local HEADER_H = 26
 	local function setIconCollapsed(state: boolean)
-		if chevronDown then
-			icon.Image = state and (chevronRight or chevronDown) or chevronDown
+		if chevronDownData then
+			local d = state and (chevronRightData or chevronDownData) or chevronDownData
+			icon.Image = d.Image
+			if d.ImageRectOffset then icon.ImageRectOffset = d.ImageRectOffset else icon.ImageRectOffset = Vector2.new(0,0) end
+			if d.ImageRectSize then icon.ImageRectSize = d.ImageRectSize else icon.ImageRectSize = Vector2.new(0,0) end
 		else
 			fallback.Text = state and ">" or "v"
 		end
