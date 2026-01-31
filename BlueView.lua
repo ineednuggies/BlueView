@@ -15,6 +15,19 @@
 
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+
+-- Safe size normalizer (prevents nil-call if a local helper isn't in scope)
+local function _safeNormalizeLucideSize(s: number): number
+	local fn = rawget(getfenv(), "_normalizeLucideSize")
+	if type(fn) == "function" then
+		local ok, v = pcall(fn, s)
+		if ok and type(v) == "number" then
+			return v
+		end
+	end
+	return s
+end
+
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -153,7 +166,7 @@ local function _lucideGet(name: string, size: number?): IconResolved?
 	_safeLoadLucide()
 	if not _Lucide then return nil end
 
-	local s = _normalizeLucideSize(tonumber(size) or 48)
+	local s = _safeNormalizeLucideSize(tonumber(size) or 48)
 	local data: any = nil
 -- Obsidian/Linoria style: GetAsset() returns {Url/ImageRectOffset/ImageRectSize} or asset id.
 if type(_Lucide.GetAsset) == "function" then
@@ -475,7 +488,7 @@ local root = mk("Frame", {
 	withUICorner(appIcon, 8)
 	withUIStroke(appIcon, theme.Stroke, 0.35, 1)
 -- App icon (logo): supports lucide name / asset id / rbxassetid string
-local logoSize = _normalizeLucideSize(tonumber(options.LogoIconSize) or 18)
+local logoSize = _safeNormalizeLucideSize(tonumber(options.LogoIconSize) or 18)
 local logoIcon = options.LogoIcon
 local logoData = nil
 if logoIcon ~= nil then
