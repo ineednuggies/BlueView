@@ -1496,6 +1496,9 @@ end
 function TabMT:AddGroupbox(title: string, opts: {Side: ("Left"|"Right")?, InitialCollapsed: boolean?}?)
 	opts = opts or {}
 	local side = opts.Side or "Left"
+	if side ~= "Left" and side ~= "Right" then
+		if tostring(side):lower() == "right" then side = "Right" else side = "Left" end
+	end
 
 	local window: any = self._window
 	local theme: Theme = window.Theme
@@ -1503,8 +1506,12 @@ function TabMT:AddGroupbox(title: string, opts: {Side: ("Left"|"Right")?, Initia
 		makeGroupbox(theme, window.IconProvider, title, window)
 
 	local cols = self._cols or {Left = self.Left, Right = self.Right}
-self._cols = cols
-frame.Parent = cols[side] or cols.Left or cols.Right
+	self._cols = cols
+	local sideKey = (side == "Right" or side == "right") and "Right" or "Left"
+	local parentCol = cols[sideKey] or cols.Left or cols.Right
+	if parentCol then
+		frame.Parent = parentCol
+	end
 	frame.LayoutOrder = #self._groupboxes + 1
 
 	local gb: any = setmetatable({}, GroupMT)
@@ -1518,39 +1525,26 @@ frame.Parent = cols[side] or cols.Left or cols.Right
 	table.insert(self._groupboxes, gb)
 
 	local HEADER_H = 26
-	local function setIconCollapsed(state: boolean)
+		local function setIconCollapsed(state: boolean)
+		local d: any = nil
 		if chevronDown then
-			local d = state and (chevronRight or chevronDown) or chevronDown
+			d = state and (chevronRight or chevronDown) or chevronDown
+		end
+
+		if d and d.Image then
 			icon.Image = d.Image
-			if d.ImageRectOffset then icon.ImageRectOffset = d.ImageRectOffset else icon.ImageRectOffset = Vector2.new(0,0) end
-			if d.ImageRectSize then icon.ImageRectSize = d.ImageRectSize else icon.ImageRectSize = Vector2.new(0,0) end
+			icon.ImageTransparency = 0
+			icon.ImageRectOffset = d.ImageRectOffset or Vector2.new(0, 0)
+			icon.ImageRectSize = d.ImageRectSize or Vector2.new(0, 0)
 		else
-			fallback.Text = state and ">" or "v"
+			icon.Image = ""
+			icon.ImageTransparency = 1
+			icon.ImageRectOffset = Vector2.new(0, 0)
+			icon.ImageRectSize = Vector2.new(0, 0)
 		end
 	end
 
-	local function applyHeight(instant: boolean?)
-		local h = list.AbsoluteContentSize.Y
-		local contentH = if gb._collapsed then 0 else (h + 2)
-		local maskH = contentH
-		local target = (PAD * 2) + HEADER_H + GAP + maskH
-
-		if instant then
-			gb._mask.Size = UDim2.new(1, 0, 0, maskH)
-			gb._content.Size = UDim2.new(1, 0, 0, maskH)
-			gb._frame.Size = UDim2.new(1, 0, 0, target)
-		else
-			tween(gb._mask, TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, maskH)})
-			tween(gb._content, TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, maskH)})
-			tween(gb._frame, TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, target)})
-		end
-	end
-
-	list:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-		if not gb._collapsed then applyHeight(false) end
-	end)
-
-	local function setCollapsed(state: boolean)
+local function setCollapsed(state: boolean)
 		gb._collapsed = state
 		setIconCollapsed(state)
 		applyHeight(false)
